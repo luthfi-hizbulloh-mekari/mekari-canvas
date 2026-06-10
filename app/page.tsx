@@ -83,8 +83,8 @@ export default function Page() {
   const [source, setSource] = useState("");
   const [dragging, setDragging] = useState(false);
   const [pasteOpen, setPasteOpen] = useState(false);
-  const [gate, setGate] = useState("");
-  const [gateSaved, setGateSaved] = useState(false);
+  const [orgCode, setOrgCode] = useState("");
+  const [orgCodeSaved, setOrgCodeSaved] = useState(false);
   const [replaceSlug, setReplaceSlug] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -104,8 +104,8 @@ export default function Page() {
     setShares(loadShares());
     const saved = localStorage.getItem(GATE_KEY);
     if (saved) {
-      setGate(saved);
-      setGateSaved(true);
+      setOrgCode(saved);
+      setOrgCodeSaved(true);
     }
   }, []);
 
@@ -169,7 +169,7 @@ export default function Page() {
       }
       const res = await fetch("/api/publish", {
         method: "POST",
-        headers: { "content-type": "application/json", "x-upload-gate": gate },
+        headers: { "content-type": "application/json", "x-upload-gate": orgCode },
         body: JSON.stringify({ html, replaceSlug: slug || undefined, editToken }),
       });
       const data = await res.json();
@@ -177,8 +177,8 @@ export default function Page() {
         setError(data.error || "Publish failed");
         return;
       }
-      localStorage.setItem(GATE_KEY, gate);
-      setGateSaved(true);
+      localStorage.setItem(GATE_KEY, orgCode);
+      setOrgCodeSaved(true);
       if (!data.replaced) {
         const next = [
           { slug: data.slug, editToken: data.editToken, createdAt: new Date().toISOString() },
@@ -201,7 +201,7 @@ export default function Page() {
     if (!confirm(`Delete /s/${share.slug}? The Short link will 404.`)) return;
     const res = await fetch(`/api/shares/${share.slug}`, {
       method: "DELETE",
-      headers: { "x-upload-gate": gate, "x-edit-token": share.editToken },
+      headers: { "x-upload-gate": orgCode, "x-edit-token": share.editToken },
     });
     if (res.ok || res.status === 404) {
       const next = shares.filter((s) => s.slug !== share.slug);
@@ -234,8 +234,8 @@ export default function Page() {
           mekari<i>®</i> canvas
         </span>
         <span>
-          <span className={`gate-dot${gateSaved ? " open" : ""}`} />
-          {gateSaved ? "gate open" : "gate closed"}
+          <span className={`status-dot${orgCodeSaved ? " open" : ""}`} />
+          {orgCodeSaved ? "org code set" : "org code needed"}
         </span>
       </header>
 
@@ -320,14 +320,14 @@ export default function Page() {
               </span>
             </div>
 
-            {!gateSaved && (
+            {!orgCodeSaved && (
               <div className="field">
-                <label>upload gate</label>
+                <label>organization code</label>
                 <input
                   type="password"
-                  value={gate}
-                  placeholder="team secret — once per browser"
-                  onChange={(e) => setGate(e.target.value)}
+                  value={orgCode}
+                  placeholder="your org code — once per browser"
+                  onChange={(e) => setOrgCode(e.target.value)}
                 />
               </div>
             )}
@@ -345,7 +345,7 @@ export default function Page() {
             <div className="actions">
               <button
                 className="publish"
-                disabled={busy || !sizeOk || !docOk || !gate}
+                disabled={busy || !sizeOk || !docOk || !orgCode}
                 onClick={publish}
               >
                 {busy ? "publishing…" : replaceSlug.trim() ? "replace" : "publish"}

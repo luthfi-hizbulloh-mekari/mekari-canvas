@@ -4,7 +4,7 @@ import { checkUploadGate, validateArtifact } from "@/lib/validate";
 
 export async function POST(req: Request) {
   if (!checkUploadGate(req)) {
-    return Response.json({ error: "Upload gate rejected" }, { status: 401 });
+    return Response.json({ error: "Invalid organization code" }, { status: 401 });
   }
 
   let body: { html?: string; replaceSlug?: string; editToken?: string };

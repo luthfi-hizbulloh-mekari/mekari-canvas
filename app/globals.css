@@ -124,7 +124,7 @@ textarea {
   color: var(--purple);
 }
 
-.gate-dot {
+.status-dot {
   display: inline-block;
   width: 7px;
   height: 7px;
@@ -134,7 +134,7 @@ textarea {
   vertical-align: 1px;
 }
 
-.gate-dot.open {
+.status-dot.open {
   background: var(--purple);
   box-shadow: 0 0 12px var(--purple);
 }

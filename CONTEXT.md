@@ -20,9 +20,9 @@ _Avoid_: Link, URL, permalink
 The 8-character random identifier in a Short link. Generated via nanoid — unguessable, URL-safe.
 _Avoid_: ID, code, hash
 
-**Upload gate**:
+**Organization code**:
 A lightweight shared secret (team password) required to publish a Share. Not full SSO — blocks drive-by abuse on a public deployment. Entered once per browser; session persisted in `localStorage`.
-_Avoid_: Auth, login, SSO
+_Avoid_: Auth, login, SSO, upload gate
 
 **Blob store**:
 Vercel Blob holds Artifact HTML bodies. A separate lightweight index (Vercel KV) maps slug → blob path and metadata.
@@ -33,7 +33,7 @@ Overwriting an existing Share's Artifact in place — the Short link stays the s
 _Avoid_: Edit, update, revise
 
 **Delete**:
-Removing a Share entirely — its Short link returns 404. Same authorization as Replace: Upload gate + matching **Browser edit token**.
+Removing a Share entirely — its Short link returns 404. Same authorization as Replace: **Organization code** + matching **Browser edit token**.
 _Avoid_: Remove, unpublish, archive
 
 **My Shares**:
@@ -41,7 +41,7 @@ The list of Shares published from the current browser, derived from `localStorag
 _Avoid_: History, dashboard, library
 
 **Browser edit token**:
-A per-Share secret stored only in the publisher's browser (`localStorage`) at create time. Required alongside Upload gate to Replace that Share. Never shown for manual copy — lost browser storage means a new Share must be published.
+A per-Share secret stored only in the publisher's browser (`localStorage`) at create time. Required alongside **Organization code** to Replace that Share. Never shown for manual copy — lost browser storage means a new Share must be published.
 _Avoid_: Edit token, cookie, session
 
 ## Relationships
@@ -49,9 +49,9 @@ _Avoid_: Edit token, cookie, session
 - One **Share** has exactly one **Artifact**
 - One **Short link** maps to exactly one **Share**
 - **Viewing** a Share requires only the Short link (unguessable slug) — no login
-- **Publishing** a Share requires passing the **Upload gate**
+- **Publishing** a Share requires the **Organization code**
 - **Replace** keeps the same Short link; absent Replace target, publish creates a new Share
-- **Replace** requires Upload gate + matching **Browser edit token** for that Share (auto-sent from `localStorage`)
+- **Replace** requires **Organization code** + matching **Browser edit token** for that Share (auto-sent from `localStorage`)
 - **Delete** requires the same authorization as **Replace**
 - Each **Share** is served as raw HTML — no iframe wrapper
 
@@ -66,4 +66,4 @@ _Avoid_: Edit token, cookie, session
 ## Flagged ambiguities
 
 - "org-only" means link discipline + unguessable slugs, not network isolation or SSO — resolved for v1.
-- Replace authorization: Upload gate + per-Share **Browser edit token** in `localStorage` only — no cross-browser fallback for v1.
+- Replace authorization: **Organization code** + per-Share **Browser edit token** in `localStorage` only — no cross-browser fallback for v1.

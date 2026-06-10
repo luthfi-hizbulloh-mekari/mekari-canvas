@@ -6,7 +6,7 @@ export async function DELETE(
   { params }: { params: Promise<{ slug: string }> }
 ) {
   if (!checkUploadGate(req)) {
-    return Response.json({ error: "Upload gate rejected" }, { status: 401 });
+    return Response.json({ error: "Invalid organization code" }, { status: 401 });
   }
   const { slug } = await params;
   const storage = getStorage();
