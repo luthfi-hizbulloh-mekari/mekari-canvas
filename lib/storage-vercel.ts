@@ -1,9 +1,14 @@
-import { del, get, put } from "@vercel/blob";
+import { del, get, put, type BlobAccessType } from "@vercel/blob";
 import { Redis } from "@upstash/redis";
 import type { ShareMeta, StorageDriver } from "@/lib/storage";
 
 const BLOB_PREFIX = "shares";
 const META_PREFIX = "canvas:share:";
+
+/** Must match the Blob store access mode chosen at creation (public is the default). */
+function blobAccess(): BlobAccessType {
+  return process.env.BLOB_STORE_ACCESS?.toLowerCase() === "private" ? "private" : "public";
+}
 
 function blobPath(slug: string): string {
   return `${BLOB_PREFIX}/${slug}.html`;
@@ -37,7 +42,7 @@ export class VercelDriver implements StorageDriver {
   }
 
   async getArtifact(slug: string): Promise<string | null> {
-    const result = await get(blobPath(slug), { access: "private" });
+    const result = await get(blobPath(slug), { access: blobAccess() });
     if (!result || result.statusCode !== 200 || !result.stream) {
       return null;
     }
@@ -46,7 +51,7 @@ export class VercelDriver implements StorageDriver {
 
   async put(meta: ShareMeta, html: string): Promise<void> {
     await put(blobPath(meta.slug), html, {
-      access: "private",
+      access: blobAccess(),
       contentType: "text/html; charset=utf-8",
       addRandomSuffix: false,
       allowOverwrite: true,
@@ -60,10 +65,12 @@ export class VercelDriver implements StorageDriver {
   }
 }
 
+function hasRedisEnv(): boolean {
+  const url = process.env.UPSTASH_REDIS_REST_URL ?? process.env.KV_REST_API_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.KV_REST_API_TOKEN;
+  return Boolean(url && token);
+}
+
 export function isVercelStorageConfigured(): boolean {
-  return Boolean(
-    process.env.BLOB_READ_WRITE_TOKEN &&
-      process.env.UPSTASH_REDIS_REST_URL &&
-      process.env.UPSTASH_REDIS_REST_TOKEN
-  );
+  return Boolean(process.env.BLOB_READ_WRITE_TOKEN && hasRedisEnv());
 }

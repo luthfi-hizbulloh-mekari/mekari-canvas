@@ -45,7 +45,8 @@ export async function POST(req: Request) {
     );
     return Response.json({ slug, editToken, replaced: false });
   } catch (err) {
-    console.error("publish storage error:", err);
+    const detail = err instanceof Error ? err.message : String(err);
+    console.error("publish storage error:", detail, err);
     return Response.json({ error: "Storage unavailable" }, { status: 503 });
   }
 }
