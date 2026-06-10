@@ -1,6 +1,7 @@
 import { createHash } from "crypto";
 import { promises as fs } from "fs";
 import path from "path";
+import { isVercelStorageConfigured, VercelDriver } from "./storage-vercel";
 
 export type ShareMeta = {
   slug: string;
@@ -77,9 +78,7 @@ let driver: StorageDriver | null = null;
 
 export function getStorage(): StorageDriver {
   if (!driver) {
-    // Vercel Blob + KV driver lands here when we deploy; local is the
-    // default so the app runs with zero credentials.
-    driver = new LocalDriver();
+    driver = isVercelStorageConfigured() ? new VercelDriver() : new LocalDriver();
   }
   return driver;
 }

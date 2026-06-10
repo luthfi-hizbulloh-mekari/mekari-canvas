@@ -8,6 +8,8 @@
     "start": "next start"
   },
   "dependencies": {
+    "@upstash/redis": "^1.38.0",
+    "@vercel/blob": "^2.4.0",
     "nanoid": "^5.0.9",
     "next": "^15.3.0",
     "react": "^19.0.0",
