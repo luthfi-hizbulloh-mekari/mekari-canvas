@@ -21,6 +21,13 @@ function saveShares(shares: MyShare[]) {
   localStorage.setItem(SHARES_KEY, JSON.stringify(shares));
 }
 
+function parseReplaceSlug(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed) return "";
+  const segment = trimmed.includes("/s/") ? trimmed.split("/s/").pop() ?? "" : trimmed;
+  return segment.replace(/\/+$/, "").split(/[?#]/)[0];
+}
+
 function formatBytes(n: number): string {
   return n >= 1024 ? `${(n / 1024).toFixed(1)} KB` : `${n} B`;
 }
@@ -157,11 +164,20 @@ export default function Page() {
     };
   }, [accept, readFile]);
 
+  const startReplace = useCallback((slug: string) => {
+    setReplaceSlug(slug);
+    setPublishedSlug("");
+    setHtml("");
+    setSource("");
+    setError("");
+    requestAnimationFrame(() => fileInput.current?.click());
+  }, []);
+
   const publish = async () => {
     setBusy(true);
     setError("");
     try {
-      const slug = replaceSlug.trim().split("/s/").pop()?.trim() || "";
+      const slug = parseReplaceSlug(replaceSlug);
       const editToken = slug ? shares.find((s) => s.slug === slug)?.editToken : undefined;
       if (slug && !editToken) {
         setError("No edit token for that Share in this browser");
@@ -309,7 +325,7 @@ export default function Page() {
             )}
             {replaceSlug && (
               <div className="replace-banner">
-                replacing /s/{replaceSlug} — drop or paste html
+                replacing /s/{parseReplaceSlug(replaceSlug)} — drop or paste html
                 <button type="button" onClick={() => setReplaceSlug("")}>
                   cancel
                 </button>
@@ -385,7 +401,7 @@ export default function Page() {
               <button className="op" onClick={() => copy(`${origin}/s/${s.slug}`)}>
                 copy
               </button>
-              <button className="op" onClick={() => setReplaceSlug(s.slug)}>
+              <button className="op" onClick={() => startReplace(s.slug)}>
                 replace
               </button>
               <button className="op danger" onClick={() => remove(s)}>

@@ -10,8 +10,12 @@ function blobAccess(): BlobAccessType {
   return process.env.BLOB_STORE_ACCESS?.toLowerCase() === "private" ? "private" : "public";
 }
 
-function blobPath(slug: string): string {
+function legacyBlobPath(slug: string): string {
   return `${BLOB_PREFIX}/${slug}.html`;
+}
+
+function versionedBlobPath(slug: string, updatedAt: string): string {
+  return `${BLOB_PREFIX}/${slug}/${Date.parse(updatedAt)}.html`;
 }
 
 function metaKey(slug: string): string {
@@ -42,7 +46,14 @@ export class VercelDriver implements StorageDriver {
   }
 
   async getArtifact(slug: string): Promise<string | null> {
-    const result = await get(blobPath(slug), { access: blobAccess() });
+    const meta = await this.getMeta(slug);
+    const path = meta?.blobPath ?? legacyBlobPath(slug);
+    const access = blobAccess();
+    const result = await get(path, {
+      access,
+      // Private stores can bypass CDN; public blobs rely on versioned pathnames.
+      ...(access === "private" ? { useCache: false } : {}),
+    });
     if (!result || result.statusCode !== 200 || !result.stream) {
       return null;
     }
@@ -50,17 +61,31 @@ export class VercelDriver implements StorageDriver {
   }
 
   async put(meta: ShareMeta, html: string): Promise<void> {
-    await put(blobPath(meta.slug), html, {
+    const previous = await this.getMeta(meta.slug);
+    const path = versionedBlobPath(meta.slug, meta.updatedAt);
+
+    await put(path, html, {
       access: blobAccess(),
       contentType: "text/html; charset=utf-8",
       addRandomSuffix: false,
-      allowOverwrite: true,
     });
-    await getRedis().set(metaKey(meta.slug), meta);
+
+    if (previous?.blobPath && previous.blobPath !== path) {
+      await del(previous.blobPath).catch(() => {});
+    } else if (previous && !previous.blobPath) {
+      await del(legacyBlobPath(meta.slug)).catch(() => {});
+    }
+
+    await getRedis().set(metaKey(meta.slug), { ...meta, blobPath: path });
   }
 
   async delete(slug: string): Promise<void> {
-    await del(blobPath(slug));
+    const meta = await this.getMeta(slug);
+    if (meta?.blobPath) {
+      await del(meta.blobPath).catch(() => {});
+    } else {
+      await del(legacyBlobPath(slug)).catch(() => {});
+    }
     await getRedis().del(metaKey(slug));
   }
 }

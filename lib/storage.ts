@@ -13,6 +13,8 @@ export type ShareMeta = {
   createdAt: string;
   updatedAt: string;
   size: number;
+  /** Current blob object key; new key on each replace avoids CDN stale reads. */
+  blobPath?: string;
 };
 
 export interface StorageDriver {
@@ -54,24 +56,56 @@ class LocalDriver implements StorageDriver {
     return index[slug] ?? null;
   }
 
+  private blobFile(slug: string, updatedAt: string): string {
+    return path.join(this.blobDir, slug, `${Date.parse(updatedAt)}.html`);
+  }
+
+  private legacyBlobFile(slug: string): string {
+    return path.join(this.blobDir, `${slug}.html`);
+  }
+
   async getArtifact(slug: string): Promise<string | null> {
+    const meta = await this.getMeta(slug);
+    if (meta?.blobPath) {
+      try {
+        return await fs.readFile(path.join(this.blobDir, meta.blobPath), "utf8");
+      } catch {
+        return null;
+      }
+    }
     try {
-      return await fs.readFile(path.join(this.blobDir, `${slug}.html`), "utf8");
+      return await fs.readFile(this.legacyBlobFile(slug), "utf8");
     } catch {
       return null;
     }
   }
 
   async put(meta: ShareMeta, html: string): Promise<void> {
-    await fs.mkdir(this.blobDir, { recursive: true });
-    await fs.writeFile(path.join(this.blobDir, `${meta.slug}.html`), html);
+    const previous = await this.getMeta(meta.slug);
+    const blobPath = path.join(meta.slug, `${Date.parse(meta.updatedAt)}.html`);
+    const blobFile = path.join(this.blobDir, blobPath);
+
+    await fs.mkdir(path.dirname(blobFile), { recursive: true });
+    await fs.writeFile(blobFile, html);
+
+    if (previous?.blobPath) {
+      await fs.rm(path.join(this.blobDir, previous.blobPath), { force: true });
+    } else if (previous) {
+      await fs.rm(this.legacyBlobFile(meta.slug), { force: true });
+    }
+
     const index = await this.readIndex();
-    index[meta.slug] = meta;
+    index[meta.slug] = { ...meta, blobPath };
     await this.writeIndex(index);
   }
 
   async delete(slug: string): Promise<void> {
-    await fs.rm(path.join(this.blobDir, `${slug}.html`), { force: true });
+    const meta = await this.getMeta(slug);
+    if (meta?.blobPath) {
+      await fs.rm(path.join(this.blobDir, meta.blobPath), { force: true });
+    } else {
+      await fs.rm(this.legacyBlobFile(slug), { force: true });
+    }
     const index = await this.readIndex();
     delete index[slug];
     await this.writeIndex(index);

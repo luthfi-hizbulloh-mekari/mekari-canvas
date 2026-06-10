@@ -1,5 +1,7 @@
 import { getStorage } from "@/lib/storage";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ slug: string }> }
@@ -13,7 +15,7 @@ export async function GET(
   return new Response(html, {
     headers: {
       "content-type": "text/html; charset=utf-8",
-      "cache-control": "public, max-age=60",
+      "cache-control": "no-store",
     },
   });
 }
