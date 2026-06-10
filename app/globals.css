@@ -164,8 +164,10 @@ textarea {
   line-height: 0.9;
   user-select: none;
   cursor: pointer;
-  color: transparent;
+  color: var(--bg);
   -webkit-text-stroke: 1.5px rgba(232, 230, 240, 0.45);
+  -webkit-text-fill-color: var(--bg);
+  paint-order: stroke fill;
   transition: -webkit-text-stroke-color 0.4s ease, transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
