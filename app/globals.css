@@ -22,6 +22,7 @@ body {
   color: var(--fg);
   font-family: var(--sans);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   overflow-x: hidden;
 }
 
@@ -175,6 +176,14 @@ textarea {
 .wordmark.dragging {
   -webkit-text-stroke-color: var(--purple);
   transform: scale(1.015);
+}
+
+/* Firefox ignores paint-order on HTML text and paints the full stroke
+   over the fill — halve it to match Chrome's visible outline width. */
+@supports (-moz-appearance: none) {
+  .wordmark {
+    -webkit-text-stroke-width: 0.75px;
+  }
 }
 
 .hint {
@@ -399,6 +408,8 @@ textarea {
   backdrop-filter: blur(12px);
   max-height: min(220px, 32vh);
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--dim) transparent;
 }
 
 .shares h2 {
