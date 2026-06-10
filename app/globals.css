@@ -150,6 +150,11 @@ textarea {
   justify-content: center;
   z-index: 1;
   padding: 120px 24px 140px;
+  transition: padding-bottom 0.25s ease;
+}
+
+.has-shares .stage {
+  padding-bottom: calc(140px + min(220px, 32vh));
 }
 
 .wordmark {
@@ -379,32 +384,48 @@ textarea {
 /* ---------- shares ---------- */
 
 .shares {
-  position: relative;
-  z-index: 1;
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 52px;
+  z-index: 6;
   width: min(720px, 92vw);
   margin: 0 auto;
-  padding: 0 0 120px;
+  padding: 14px 20px 10px;
+  border-top: 1px solid var(--line);
+  background: rgba(8, 8, 11, 0.92);
+  backdrop-filter: blur(12px);
+  max-height: min(220px, 32vh);
+  overflow-y: auto;
 }
 
 .shares h2 {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 10px;
   letter-spacing: 0.3em;
   text-transform: uppercase;
   color: var(--dim);
   font-weight: 400;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
+  position: sticky;
+  top: 0;
+  background: rgba(8, 8, 11, 0.92);
+  padding-bottom: 4px;
 }
 
 .share-row {
   display: flex;
   align-items: center;
-  gap: 18px;
-  padding: 16px 0;
+  gap: 14px;
+  padding: 10px 0;
   border-bottom: 1px solid var(--line);
   font-family: var(--mono);
-  font-size: 13px;
+  font-size: 12px;
   transition: padding-left 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.share-row:last-child {
+  border-bottom: none;
 }
 
 .share-row:hover {
@@ -422,9 +443,35 @@ textarea {
 
 .share-row .when {
   color: var(--dim);
-  font-size: 11px;
+  font-size: 10px;
   flex: 1;
   text-align: right;
+  white-space: nowrap;
+}
+
+.replace-banner {
+  margin-top: 28px;
+  padding: 10px 14px;
+  border: 1px solid var(--purple-soft);
+  background: rgba(101, 31, 255, 0.08);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg);
+  animation: rise 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.replace-banner button {
+  margin-left: 12px;
+  color: var(--dim);
+  font-size: 10px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+
+.replace-banner button:hover {
+  color: var(--fg);
 }
 
 .share-row .op {

@@ -223,7 +223,7 @@ export default function Page() {
   const armed = html.length > 0;
 
   return (
-    <>
+    <div className={shares.length > 0 ? "has-shares" : undefined}>
       <CursorGlow />
       <div className="noise" />
       <div className={`frame${dragging ? " dragging" : ""}`} />
@@ -305,6 +305,14 @@ export default function Page() {
                     }}
                   />
                 </div>
+              </div>
+            )}
+            {replaceSlug && (
+              <div className="replace-banner">
+                replacing /s/{replaceSlug} — drop or paste html
+                <button type="button" onClick={() => setReplaceSlug("")}>
+                  cancel
+                </button>
               </div>
             )}
           </>
@@ -395,6 +403,6 @@ export default function Page() {
           ).join("")}
         </span>
       </div>
-    </>
+    </div>
   );
 }
