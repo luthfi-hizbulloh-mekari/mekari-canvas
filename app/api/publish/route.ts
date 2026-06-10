@@ -20,11 +20,11 @@ export async function POST(req: Request) {
     return Response.json({ error: invalid }, { status: 422 });
   }
 
-  const storage = getStorage();
   const now = new Date().toISOString();
   const size = Buffer.byteLength(html, "utf8");
 
   try {
+    const storage = getStorage();
     if (body.replaceSlug) {
       const meta = await storage.getMeta(body.replaceSlug);
       if (!meta) {
@@ -47,6 +47,9 @@ export async function POST(req: Request) {
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     console.error("publish storage error:", detail, err);
-    return Response.json({ error: "Storage unavailable" }, { status: 503 });
+    return Response.json(
+      { error: detail.includes("misconfigured") ? detail : "Storage unavailable" },
+      { status: 503 }
+    );
   }
 }

@@ -71,6 +71,24 @@ function hasRedisEnv(): boolean {
   return Boolean(url && token);
 }
 
+/** Linked Blob stores may use a read-write token or OIDC + store ID on Vercel. */
+function hasBlobEnv(): boolean {
+  if (process.env.BLOB_READ_WRITE_TOKEN) return true;
+  // Store linked via dashboard: BLOB_STORE_ID + runtime OIDC (no BLOB_READ_WRITE_TOKEN).
+  return Boolean(process.env.BLOB_STORE_ID && process.env.VERCEL === "1");
+}
+
 export function isVercelStorageConfigured(): boolean {
-  return Boolean(process.env.BLOB_READ_WRITE_TOKEN && hasRedisEnv());
+  return hasBlobEnv() && hasRedisEnv();
+}
+
+export function storageConfigHint(): string {
+  const missing: string[] = [];
+  if (!hasBlobEnv()) {
+    missing.push("Blob (BLOB_READ_WRITE_TOKEN or linked BLOB_STORE_ID)");
+  }
+  if (!hasRedisEnv()) {
+    missing.push("Redis (UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN)");
+  }
+  return missing.length ? `Missing: ${missing.join(", ")}` : "ok";
 }

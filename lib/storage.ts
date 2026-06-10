@@ -1,7 +1,11 @@
 import { createHash } from "crypto";
 import { promises as fs } from "fs";
 import path from "path";
-import { isVercelStorageConfigured, VercelDriver } from "./storage-vercel";
+import {
+  isVercelStorageConfigured,
+  storageConfigHint,
+  VercelDriver,
+} from "./storage-vercel";
 
 export type ShareMeta = {
   slug: string;
@@ -78,7 +82,13 @@ let driver: StorageDriver | null = null;
 
 export function getStorage(): StorageDriver {
   if (!driver) {
-    driver = isVercelStorageConfigured() ? new VercelDriver() : new LocalDriver();
+    if (isVercelStorageConfigured()) {
+      driver = new VercelDriver();
+    } else if (process.env.VERCEL === "1") {
+      throw new Error(`Storage misconfigured on Vercel. ${storageConfigHint()}`);
+    } else {
+      driver = new LocalDriver();
+    }
   }
   return driver;
 }
