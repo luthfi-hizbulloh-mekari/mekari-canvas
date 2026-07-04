@@ -2,8 +2,16 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Logo from "@/components/Logo";
+import type { ArtifactKind } from "@/lib/artifact-kind";
+import {
+  MAX_ARTIFACT_BYTES,
+  artifactBytes,
+  detectArtifactKind,
+  validateArtifact,
+} from "@/lib/validate";
 
-type MyShare = { slug: string; editToken: string; createdAt: string };
+type MyShare = { slug: string; editToken: string; createdAt: string; kind: ArtifactKind };
+type StoredMyShare = Omit<MyShare, "kind"> & { kind?: ArtifactKind };
 
 const GATE_KEY = "canvas.gate";
 const SHARES_KEY = "canvas.shares";
@@ -11,7 +19,9 @@ const SCRAMBLE = "abcdefghijklmnopqrstuvwxyz0123456789_-";
 
 function loadShares(): MyShare[] {
   try {
-    return JSON.parse(localStorage.getItem(SHARES_KEY) || "[]");
+    const parsed = JSON.parse(localStorage.getItem(SHARES_KEY) || "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((share: StoredMyShare) => ({ ...share, kind: share.kind ?? "html" }));
   } catch {
     return [];
   }
@@ -30,6 +40,16 @@ function parseReplaceSlug(input: string): string {
 
 function formatBytes(n: number): string {
   return n >= 1024 ? `${(n / 1024).toFixed(1)} KB` : `${n} B`;
+}
+
+function validationLabel(
+  error: string | null,
+  kind: ArtifactKind,
+  isWithinSizeCap: boolean
+): string {
+  if (!error) return "✓ valid";
+  if (!isWithinSizeCap) return "× over 500kb";
+  return kind === "html" ? "× not html" : "× empty md";
 }
 
 /** Decode-style text reveal for the freshly minted short link. */
@@ -86,7 +106,8 @@ function CursorGlow() {
 }
 
 export default function Page() {
-  const [html, setHtml] = useState("");
+  const [content, setContent] = useState("");
+  const [kind, setKind] = useState<ArtifactKind>("html");
   const [source, setSource] = useState("");
   const [dragging, setDragging] = useState(false);
   const [pasteOpen, setPasteOpen] = useState(false);
@@ -104,8 +125,11 @@ export default function Page() {
   const shortLink = publishedSlug ? `${origin}/s/${publishedSlug}` : "";
   const scrambled = useScramble(shortLink);
 
-  const sizeOk = html.length > 0 && new Blob([html]).size <= 500 * 1024;
-  const docOk = /<html|<!doctype/i.test(html.slice(0, 2048));
+  const byteLength = artifactBytes(content);
+  const isWithinSizeCap = byteLength <= MAX_ARTIFACT_BYTES;
+  const validationError = content ? validateArtifact(content, kind) : "Artifact required";
+  const artifactOk = content.length > 0 && isWithinSizeCap && validationError === null;
+  const statusLabel = validationLabel(validationError, kind, isWithinSizeCap);
 
   useEffect(() => {
     setShares(loadShares());
@@ -116,8 +140,9 @@ export default function Page() {
     }
   }, []);
 
-  const accept = useCallback((content: string, name: string) => {
-    setHtml(content);
+  const accept = useCallback((nextContent: string, name: string, nextKind?: ArtifactKind) => {
+    setContent(nextContent);
+    setKind(nextKind ?? detectArtifactKind(nextContent, name));
     setSource(name);
     setPublishedSlug("");
     setError("");
@@ -150,7 +175,8 @@ export default function Page() {
       const target = e.target as HTMLElement;
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
       const text = e.clipboardData?.getData("text") || "";
-      if (/<html|<!doctype/i.test(text)) accept(text, "clipboard");
+      const pastedKind = detectArtifactKind(text);
+      if (pastedKind === "html") accept(text, "clipboard", pastedKind);
     };
     document.addEventListener("dragover", onDragOver);
     document.addEventListener("dragleave", onDragLeave);
@@ -167,7 +193,8 @@ export default function Page() {
   const startReplace = useCallback((slug: string) => {
     setReplaceSlug(slug);
     setPublishedSlug("");
-    setHtml("");
+    setContent("");
+    setKind("html");
     setSource("");
     setError("");
     requestAnimationFrame(() => fileInput.current?.click());
@@ -186,7 +213,7 @@ export default function Page() {
       const res = await fetch("/api/publish", {
         method: "POST",
         headers: { "content-type": "application/json", "x-upload-gate": orgCode },
-        body: JSON.stringify({ html, replaceSlug: slug || undefined, editToken }),
+        body: JSON.stringify({ content, kind, replaceSlug: slug || undefined, editToken }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -195,16 +222,29 @@ export default function Page() {
       }
       localStorage.setItem(GATE_KEY, orgCode);
       setOrgCodeSaved(true);
+      const publishedKind = data.kind as ArtifactKind;
       if (!data.replaced) {
         const next = [
-          { slug: data.slug, editToken: data.editToken, createdAt: new Date().toISOString() },
+          {
+            slug: data.slug,
+            editToken: data.editToken,
+            createdAt: new Date().toISOString(),
+            kind: publishedKind,
+          },
           ...shares,
         ];
         setShares(next);
         saveShares(next);
+      } else {
+        const next = shares.map((share) =>
+          share.slug === data.slug ? { ...share, kind: publishedKind } : share
+        );
+        setShares(next);
+        saveShares(next);
       }
       setPublishedSlug(data.slug);
-      setHtml("");
+      setContent("");
+      setKind("html");
       setReplaceSlug("");
     } catch {
       setError("Network error");
@@ -236,7 +276,7 @@ export default function Page() {
     setTimeout(() => setCopied(false), 1200);
   };
 
-  const armed = html.length > 0;
+  const armed = content.length > 0;
 
   return (
     <div className={shares.length > 0 ? "has-shares" : undefined}>
@@ -258,7 +298,7 @@ export default function Page() {
       <input
         ref={fileInput}
         type="file"
-        accept=".html,.htm,text/html"
+        accept=".html,.htm,.md,text/html,text/markdown"
         hidden
         onChange={(e) => {
           const f = e.target.files?.[0];
@@ -301,7 +341,7 @@ export default function Page() {
               CANVAS
             </h1>
             <div className="hint">
-              <span className="key">drop .html</span>
+              <span className="key">drop .html/.md</span>
               <span className="sep">/</span>
               <span className="key">⌘V</span>
               <span className="sep">/</span>
@@ -310,13 +350,16 @@ export default function Page() {
             {pasteOpen && (
               <div className="panel" style={{ marginTop: 40 }}>
                 <div className="field" style={{ marginTop: 0 }}>
-                  <label>raw html</label>
+                  <label>raw artifact</label>
                   <textarea
                     autoFocus
-                    placeholder="<!DOCTYPE html>…"
-                    onChange={(e) => {
-                      if (/<html|<!doctype/i.test(e.target.value)) {
-                        accept(e.target.value, "pasted");
+                    placeholder="<!DOCTYPE html>... or # Markdown — paste here"
+                    onPaste={(e) => {
+                      const text = e.clipboardData.getData("text");
+                      const pastedKind = detectArtifactKind(text);
+                      if (!validateArtifact(text, pastedKind)) {
+                        e.preventDefault();
+                        accept(text, "pasted", pastedKind);
                       }
                     }}
                   />
@@ -325,7 +368,7 @@ export default function Page() {
             )}
             {replaceSlug && (
               <div className="replace-banner">
-                replacing /s/{parseReplaceSlug(replaceSlug)} — drop or paste html
+                replacing /s/{parseReplaceSlug(replaceSlug)} — drop or paste same kind
                 <button type="button" onClick={() => setReplaceSlug("")}>
                   cancel
                 </button>
@@ -335,12 +378,12 @@ export default function Page() {
         ) : (
           <div className="panel">
             <div className="meta">
-              <span>{source}</span>
               <span>
-                {formatBytes(new Blob([html]).size)}{" "}
-                <span className={sizeOk && docOk ? "ok" : "bad"}>
-                  {!docOk ? "× not html" : !sizeOk ? "× over 500kb" : "✓ valid"}
-                </span>
+                {source} · {kind}
+              </span>
+              <span>
+                {formatBytes(byteLength)}{" "}
+                <span className={artifactOk ? "ok" : "bad"}>{statusLabel}</span>
               </span>
             </div>
 
@@ -369,12 +412,18 @@ export default function Page() {
             <div className="actions">
               <button
                 className="publish"
-                disabled={busy || !sizeOk || !docOk || !orgCode}
+                disabled={busy || !artifactOk || !orgCode}
                 onClick={publish}
               >
                 {busy ? "publishing…" : replaceSlug.trim() ? "replace" : "publish"}
               </button>
-              <button className="ghost" onClick={() => setHtml("")}>
+              <button
+                className="ghost"
+                onClick={() => {
+                  setContent("");
+                  setKind("html");
+                }}
+              >
                 discard
               </button>
             </div>
@@ -396,7 +445,8 @@ export default function Page() {
                 {new Date(s.createdAt).toLocaleDateString("en-GB", {
                   day: "2-digit",
                   month: "short",
-                })}
+                })}{" "}
+                · {s.kind}
               </span>
               <button className="op" onClick={() => copy(`${origin}/s/${s.slug}`)}>
                 copy
@@ -415,7 +465,7 @@ export default function Page() {
       <div className="marquee">
         <span className="track">
           {Array.from({ length: 2 }, () =>
-            "paste html — get a permanent link — no drafts — no logins — ".repeat(4)
+            "paste html or md — get a permanent link — no drafts — no logins — ".repeat(4)
           ).join("")}
         </span>
       </div>

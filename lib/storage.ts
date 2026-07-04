@@ -1,6 +1,7 @@
 import { createHash } from "crypto";
 import { promises as fs } from "fs";
 import path from "path";
+import { ARTIFACT_KIND, type ArtifactKind } from "@/lib/artifact-kind";
 import {
   isVercelStorageConfigured,
   storageConfigHint,
@@ -9,6 +10,7 @@ import {
 
 export type ShareMeta = {
   slug: string;
+  kind: ArtifactKind;
   editTokenHash: string;
   createdAt: string;
   updatedAt: string;
@@ -17,10 +19,14 @@ export type ShareMeta = {
   blobPath?: string;
 };
 
+export type StoredShareMeta = Omit<ShareMeta, "kind"> & { kind?: ArtifactKind };
+export type StoredShareIndex = Record<string, StoredShareMeta>;
+export type ShareArtifact = { body: string; meta: ShareMeta };
+
 export interface StorageDriver {
   getMeta(slug: string): Promise<ShareMeta | null>;
-  getArtifact(slug: string): Promise<string | null>;
-  put(meta: ShareMeta, html: string): Promise<void>;
+  getArtifact(slug: string): Promise<ShareArtifact | null>;
+  put(meta: ShareMeta, body: string): Promise<void>;
   delete(slug: string): Promise<void>;
 }
 
@@ -38,7 +44,7 @@ class LocalDriver implements StorageDriver {
   private blobDir = path.join(this.dataDir, "blobs");
   private indexFile = path.join(this.dataDir, "index.json");
 
-  private async readIndex(): Promise<Record<string, ShareMeta>> {
+  private async readIndex(): Promise<StoredShareIndex> {
     try {
       return JSON.parse(await fs.readFile(this.indexFile, "utf8"));
     } catch {
@@ -46,47 +52,50 @@ class LocalDriver implements StorageDriver {
     }
   }
 
-  private async writeIndex(index: Record<string, ShareMeta>): Promise<void> {
+  private async writeIndex(index: StoredShareIndex): Promise<void> {
     await fs.mkdir(this.dataDir, { recursive: true });
     await fs.writeFile(this.indexFile, JSON.stringify(index, null, 2));
   }
 
   async getMeta(slug: string): Promise<ShareMeta | null> {
     const index = await this.readIndex();
-    return index[slug] ?? null;
-  }
-
-  private blobFile(slug: string, updatedAt: string): string {
-    return path.join(this.blobDir, slug, `${Date.parse(updatedAt)}.html`);
+    const meta = index[slug];
+    return meta ? { ...meta, kind: meta.kind ?? "html" } : null;
   }
 
   private legacyBlobFile(slug: string): string {
     return path.join(this.blobDir, `${slug}.html`);
   }
 
-  async getArtifact(slug: string): Promise<string | null> {
+  async getArtifact(slug: string): Promise<ShareArtifact | null> {
     const meta = await this.getMeta(slug);
-    if (meta?.blobPath) {
+    if (!meta) return null;
+
+    if (meta.blobPath) {
       try {
-        return await fs.readFile(path.join(this.blobDir, meta.blobPath), "utf8");
+        return { body: await fs.readFile(path.join(this.blobDir, meta.blobPath), "utf8"), meta };
       } catch {
         return null;
       }
     }
+
     try {
-      return await fs.readFile(this.legacyBlobFile(slug), "utf8");
+      return { body: await fs.readFile(this.legacyBlobFile(slug), "utf8"), meta };
     } catch {
       return null;
     }
   }
 
-  async put(meta: ShareMeta, html: string): Promise<void> {
+  async put(meta: ShareMeta, body: string): Promise<void> {
     const previous = await this.getMeta(meta.slug);
-    const blobPath = path.join(meta.slug, `${Date.parse(meta.updatedAt)}.html`);
+    const blobPath = path.join(
+      meta.slug,
+      `${Date.parse(meta.updatedAt)}${ARTIFACT_KIND[meta.kind].ext}`
+    );
     const blobFile = path.join(this.blobDir, blobPath);
 
     await fs.mkdir(path.dirname(blobFile), { recursive: true });
-    await fs.writeFile(blobFile, html);
+    await fs.writeFile(blobFile, body);
 
     if (previous?.blobPath) {
       await fs.rm(path.join(this.blobDir, previous.blobPath), { force: true });

@@ -1,6 +1,7 @@
 import { del, get, put, type BlobAccessType } from "@vercel/blob";
 import { Redis } from "@upstash/redis";
-import type { ShareMeta, StorageDriver } from "@/lib/storage";
+import { ARTIFACT_KIND, type ArtifactKind } from "@/lib/artifact-kind";
+import type { ShareArtifact, ShareMeta, StorageDriver, StoredShareMeta } from "@/lib/storage";
 
 const BLOB_PREFIX = "shares";
 const META_PREFIX = "canvas:share:";
@@ -14,8 +15,8 @@ function legacyBlobPath(slug: string): string {
   return `${BLOB_PREFIX}/${slug}.html`;
 }
 
-function versionedBlobPath(slug: string, updatedAt: string): string {
-  return `${BLOB_PREFIX}/${slug}/${Date.parse(updatedAt)}.html`;
+function versionedBlobPath(slug: string, updatedAt: string, kind: ArtifactKind): string {
+  return `${BLOB_PREFIX}/${slug}/${Date.parse(updatedAt)}${ARTIFACT_KIND[kind].ext}`;
 }
 
 function metaKey(slug: string): string {
@@ -41,13 +42,15 @@ async function readStream(stream: ReadableStream<Uint8Array>): Promise<string> {
  */
 export class VercelDriver implements StorageDriver {
   async getMeta(slug: string): Promise<ShareMeta | null> {
-    const meta = await getRedis().get<ShareMeta>(metaKey(slug));
-    return meta ?? null;
+    const meta = await getRedis().get<StoredShareMeta>(metaKey(slug));
+    return meta ? { ...meta, kind: meta.kind ?? "html" } : null;
   }
 
-  async getArtifact(slug: string): Promise<string | null> {
+  async getArtifact(slug: string): Promise<ShareArtifact | null> {
     const meta = await this.getMeta(slug);
-    const path = meta?.blobPath ?? legacyBlobPath(slug);
+    if (!meta) return null;
+
+    const path = meta.blobPath ?? legacyBlobPath(slug);
     const access = blobAccess();
     const result = await get(path, {
       access,
@@ -57,16 +60,16 @@ export class VercelDriver implements StorageDriver {
     if (!result || result.statusCode !== 200 || !result.stream) {
       return null;
     }
-    return readStream(result.stream);
+    return { body: await readStream(result.stream), meta };
   }
 
-  async put(meta: ShareMeta, html: string): Promise<void> {
+  async put(meta: ShareMeta, body: string): Promise<void> {
     const previous = await this.getMeta(meta.slug);
-    const path = versionedBlobPath(meta.slug, meta.updatedAt);
+    const path = versionedBlobPath(meta.slug, meta.updatedAt, meta.kind);
 
-    await put(path, html, {
+    await put(path, body, {
       access: blobAccess(),
-      contentType: "text/html; charset=utf-8",
+      contentType: ARTIFACT_KIND[meta.kind].contentType,
       addRandomSuffix: false,
     });
 

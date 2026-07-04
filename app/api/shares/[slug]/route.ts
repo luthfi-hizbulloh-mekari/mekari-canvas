@@ -1,5 +1,5 @@
 import { getStorage, hashToken } from "@/lib/storage";
-import { checkUploadGate } from "@/lib/validate";
+import { checkUploadGate } from "@/lib/upload-gate";
 
 export async function DELETE(
   req: Request,
