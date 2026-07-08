@@ -13,11 +13,17 @@ export async function authorizeShareMutation(
   if (!meta) {
     return { ok: false, status: 404, error: "Share not found" };
   }
+
+  if (meta.publishedBy) {
+    if (meta.publishedBy !== publisherEmail) {
+      return { ok: false, status: 403, error: "Publisher email mismatch" };
+    }
+    return { ok: true, meta };
+  }
+
+  // Legacy grandfather: Shares without Published by require Browser edit token.
   if (!editToken || hashToken(editToken) !== meta.editTokenHash) {
     return { ok: false, status: 403, error: "Browser edit token mismatch" };
-  }
-  if (meta.publishedBy && meta.publishedBy !== publisherEmail) {
-    return { ok: false, status: 403, error: "Publisher email mismatch" };
   }
   return { ok: true, meta };
 }

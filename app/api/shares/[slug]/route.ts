@@ -8,7 +8,10 @@ export async function DELETE(
 ) {
   const publisherEmail = await getPublisherEmail(req);
   if (!publisherEmail) {
-    return Response.json({ error: "Publisher sign-in required" }, { status: 401 });
+    return Response.json(
+      { error: "Publisher sign-in or Bearer token required" },
+      { status: 401 }
+    );
   }
 
   const { slug } = await params;

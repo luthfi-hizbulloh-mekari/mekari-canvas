@@ -30,6 +30,7 @@ export interface StorageDriver {
   getArtifact(slug: string): Promise<ShareArtifact | null>;
   put(meta: ShareMeta, body: string): Promise<void>;
   delete(slug: string): Promise<void>;
+  listByPublisher(publisherEmail: string): Promise<ShareMeta[]>;
 }
 
 export function hashToken(token: string): string {
@@ -45,6 +46,7 @@ class LocalDriver implements StorageDriver {
   private dataDir = path.join(process.cwd(), ".data");
   private blobDir = path.join(this.dataDir, "blobs");
   private indexFile = path.join(this.dataDir, "index.json");
+  private publisherIndexFile = path.join(this.dataDir, "publisher-slugs.json");
 
   private async readIndex(): Promise<StoredShareIndex> {
     try {
@@ -57,6 +59,36 @@ class LocalDriver implements StorageDriver {
   private async writeIndex(index: StoredShareIndex): Promise<void> {
     await fs.mkdir(this.dataDir, { recursive: true });
     await fs.writeFile(this.indexFile, JSON.stringify(index, null, 2));
+  }
+
+  private async readPublisherIndex(): Promise<Record<string, string[]>> {
+    try {
+      return JSON.parse(await fs.readFile(this.publisherIndexFile, "utf8"));
+    } catch {
+      return {};
+    }
+  }
+
+  private async writePublisherIndex(index: Record<string, string[]>): Promise<void> {
+    await fs.mkdir(this.dataDir, { recursive: true });
+    await fs.writeFile(this.publisherIndexFile, JSON.stringify(index, null, 2));
+  }
+
+  private async addPublisherSlug(publisherEmail: string, slug: string): Promise<void> {
+    const index = await this.readPublisherIndex();
+    const slugs = index[publisherEmail] ?? [];
+    if (!slugs.includes(slug)) {
+      index[publisherEmail] = [slug, ...slugs];
+      await this.writePublisherIndex(index);
+    }
+  }
+
+  private async removePublisherSlug(publisherEmail: string, slug: string): Promise<void> {
+    const index = await this.readPublisherIndex();
+    const slugs = index[publisherEmail];
+    if (!slugs) return;
+    index[publisherEmail] = slugs.filter((s) => s !== slug);
+    await this.writePublisherIndex(index);
   }
 
   async getMeta(slug: string): Promise<ShareMeta | null> {
@@ -108,6 +140,10 @@ class LocalDriver implements StorageDriver {
     const index = await this.readIndex();
     index[meta.slug] = { ...meta, blobPath };
     await this.writeIndex(index);
+
+    if (meta.publishedBy && !previous) {
+      await this.addPublisherSlug(meta.publishedBy, meta.slug);
+    }
   }
 
   async delete(slug: string): Promise<void> {
@@ -120,6 +156,21 @@ class LocalDriver implements StorageDriver {
     const index = await this.readIndex();
     delete index[slug];
     await this.writeIndex(index);
+
+    if (meta?.publishedBy) {
+      await this.removePublisherSlug(meta.publishedBy, slug);
+    }
+  }
+
+  async listByPublisher(publisherEmail: string): Promise<ShareMeta[]> {
+    const publisherIndex = await this.readPublisherIndex();
+    const slugs = publisherIndex[publisherEmail] ?? [];
+    const shares: ShareMeta[] = [];
+    for (const slug of slugs) {
+      const meta = await this.getMeta(slug);
+      if (meta) shares.push(meta);
+    }
+    return shares.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
   }
 }
 

@@ -1,10 +1,11 @@
 import { del, get, put, type BlobAccessType } from "@vercel/blob";
-import { Redis } from "@upstash/redis";
 import { ARTIFACT_KIND, type ArtifactKind } from "@/lib/artifact-kind";
+import { getRedis } from "@/lib/redis";
 import type { ShareArtifact, ShareMeta, StorageDriver, StoredShareMeta } from "@/lib/storage";
 
 const BLOB_PREFIX = "shares";
 const META_PREFIX = "canvas:share:";
+const PUBLISHER_SLUGS_PREFIX = "canvas:publisher:slugs:";
 
 /** Must match the Blob store access mode chosen at creation (public is the default). */
 function blobAccess(): BlobAccessType {
@@ -23,13 +24,8 @@ function metaKey(slug: string): string {
   return `${META_PREFIX}${slug}`;
 }
 
-let redis: Redis | null = null;
-
-function getRedis(): Redis {
-  if (!redis) {
-    redis = Redis.fromEnv();
-  }
-  return redis;
+function publisherSlugsKey(email: string): string {
+  return `${PUBLISHER_SLUGS_PREFIX}${email}`;
 }
 
 async function readStream(stream: ReadableStream<Uint8Array>): Promise<string> {
@@ -80,6 +76,10 @@ export class VercelDriver implements StorageDriver {
     }
 
     await getRedis().set(metaKey(meta.slug), { ...meta, blobPath: path });
+
+    if (meta.publishedBy && !previous) {
+      await getRedis().sadd(publisherSlugsKey(meta.publishedBy), meta.slug);
+    }
   }
 
   async delete(slug: string): Promise<void> {
@@ -90,6 +90,20 @@ export class VercelDriver implements StorageDriver {
       await del(legacyBlobPath(slug)).catch(() => {});
     }
     await getRedis().del(metaKey(slug));
+
+    if (meta?.publishedBy) {
+      await getRedis().srem(publisherSlugsKey(meta.publishedBy), slug);
+    }
+  }
+
+  async listByPublisher(publisherEmail: string): Promise<ShareMeta[]> {
+    const slugs = await getRedis().smembers(publisherSlugsKey(publisherEmail));
+    const shares: ShareMeta[] = [];
+    for (const slug of slugs) {
+      const meta = await this.getMeta(slug);
+      if (meta) shares.push(meta);
+    }
+    return shares.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
   }
 }
 

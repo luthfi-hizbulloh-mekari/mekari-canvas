@@ -1,0 +1,16 @@
+{
+  "version": "1.0.0",
+  "apiBase": "https://mekari-canvas.vercel.app",
+  "exchangeUrl": "/api/setup/exchange",
+  "skillName": "mekari-canvas",
+  "files": [
+  {
+    "path": "SKILL.md",
+    "url": "/setup/skill/SKILL.md"
+  },
+  {
+    "path": "scripts/mekari-canvas.sh",
+    "url": "/setup/skill/scripts/mekari-canvas.sh"
+  }
+  ]
+}

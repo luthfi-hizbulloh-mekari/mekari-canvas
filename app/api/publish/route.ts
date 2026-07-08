@@ -2,13 +2,16 @@ import { nanoid } from "nanoid";
 import { isArtifactKind } from "@/lib/artifact-kind";
 import { getPublisherEmail } from "@/lib/publisher-session";
 import { authorizeShareMutation } from "@/lib/share-authz";
-import { getStorage, hashToken } from "@/lib/storage";
+import { getStorage } from "@/lib/storage";
 import { artifactBytes, validateArtifact } from "@/lib/validate";
 
 export async function POST(req: Request) {
   const publisherEmail = await getPublisherEmail(req);
   if (!publisherEmail) {
-    return Response.json({ error: "Publisher sign-in required" }, { status: 401 });
+    return Response.json(
+      { error: "Publisher sign-in or Bearer token required" },
+      { status: 401 }
+    );
   }
 
   let body: { content?: unknown; kind?: unknown; replaceSlug?: string; editToken?: string };
@@ -58,12 +61,11 @@ export async function POST(req: Request) {
     }
 
     const slug = nanoid(8);
-    const newEditToken = nanoid(32);
     await storage.put(
       {
         slug,
         kind,
-        editTokenHash: hashToken(newEditToken),
+        editTokenHash: "",
         createdAt: now,
         updatedAt: now,
         size,
@@ -73,7 +75,6 @@ export async function POST(req: Request) {
     );
     return Response.json({
       slug,
-      editToken: newEditToken,
       replaced: false,
       kind,
       publishedBy: publisherEmail,

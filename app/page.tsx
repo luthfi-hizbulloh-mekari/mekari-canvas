@@ -1,6 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import AddSkillPanel from "@/components/AddSkillPanel";
+import ConnectedTokens from "@/components/ConnectedTokens";
+import MyShares, { type ServerShare } from "@/components/MyShares";
 import Logo from "@/components/Logo";
 import { authClient } from "@/lib/auth-client";
 import type { ArtifactKind } from "@/lib/artifact-kind";
@@ -11,31 +14,30 @@ import {
   validateArtifact,
 } from "@/lib/validate";
 
-type MyShare = {
-  slug: string;
-  editToken: string;
-  createdAt: string;
-  kind: ArtifactKind;
-  publishedBy?: string;
-};
-type StoredMyShare = Omit<MyShare, "kind"> & { kind?: ArtifactKind };
+const LEGACY_TOKENS_KEY = "canvas.legacy-edit-tokens";
 
-const SHARES_KEY = "canvas.shares";
-const SCRAMBLE = "abcdefghijklmnopqrstuvwxyz0123456789_-";
-
-function loadShares(): MyShare[] {
+function loadLegacyEditTokens(): Record<string, string> {
   try {
-    const parsed = JSON.parse(localStorage.getItem(SHARES_KEY) || "[]");
-    if (!Array.isArray(parsed)) return [];
-    return parsed.map((share: StoredMyShare) => ({ ...share, kind: share.kind ?? "html" }));
+    const parsed = JSON.parse(localStorage.getItem(LEGACY_TOKENS_KEY) || "{}");
+    return parsed && typeof parsed === "object" ? parsed : {};
   } catch {
-    return [];
+    return {};
   }
 }
 
-function saveShares(shares: MyShare[]) {
-  localStorage.setItem(SHARES_KEY, JSON.stringify(shares));
+function saveLegacyEditToken(slug: string, editToken: string) {
+  const tokens = loadLegacyEditTokens();
+  tokens[slug] = editToken;
+  localStorage.setItem(LEGACY_TOKENS_KEY, JSON.stringify(tokens));
 }
+
+function removeLegacyEditToken(slug: string) {
+  const tokens = loadLegacyEditTokens();
+  delete tokens[slug];
+  localStorage.setItem(LEGACY_TOKENS_KEY, JSON.stringify(tokens));
+}
+
+const SCRAMBLE = "abcdefghijklmnopqrstuvwxyz0123456789_-";
 
 function parseReplaceSlug(input: string): string {
   const trimmed = input.trim();
@@ -58,7 +60,6 @@ function validationLabel(
   return kind === "html" ? "× not html" : "× empty md";
 }
 
-/** Decode-style text reveal for the freshly minted short link. */
 function useScramble(target: string) {
   const [text, setText] = useState(target);
   useEffect(() => {
@@ -120,12 +121,15 @@ export default function Page() {
   const [replaceSlug, setReplaceSlug] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [sharesError, setSharesError] = useState("");
   const [publishedSlug, setPublishedSlug] = useState("");
-  const [shares, setShares] = useState<MyShare[]>([]);
+  const [shares, setShares] = useState<ServerShare[]>([]);
+  const [legacyEditTokens, setLegacyEditTokens] = useState<Record<string, string>>({});
   const [copied, setCopied] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const { data: session } = authClient.useSession();
   const publisherEmail = session?.user?.email ?? "";
+  const signedIn = Boolean(publisherEmail);
 
   const origin = typeof location !== "undefined" ? location.origin : "";
   const shortLink = publishedSlug ? `${origin}/s/${publishedSlug}` : "";
@@ -137,9 +141,33 @@ export default function Page() {
   const artifactOk = content.length > 0 && isWithinSizeCap && validationError === null;
   const statusLabel = validationLabel(validationError, kind, isWithinSizeCap);
 
+  const loadShares = useCallback(async () => {
+    if (!signedIn) {
+      setShares([]);
+      return;
+    }
+    setSharesError("");
+    try {
+      const res = await fetch("/api/shares");
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setSharesError(data.error || "Could not load shares");
+        return;
+      }
+      const data = await res.json();
+      setShares(Array.isArray(data.shares) ? data.shares : []);
+    } catch {
+      setSharesError("Network error loading shares");
+    }
+  }, [signedIn]);
+
   useEffect(() => {
-    setShares(loadShares());
+    setLegacyEditTokens(loadLegacyEditTokens());
   }, []);
+
+  useEffect(() => {
+    loadShares();
+  }, [loadShares]);
 
   const accept = useCallback((nextContent: string, name: string, nextKind?: ArtifactKind) => {
     setContent(nextContent);
@@ -157,7 +185,6 @@ export default function Page() {
     [accept]
   );
 
-  // The whole page is the drop zone; paste works anywhere too.
   useEffect(() => {
     const onDragOver = (e: DragEvent) => {
       e.preventDefault();
@@ -206,43 +233,35 @@ export default function Page() {
     setError("");
     try {
       const slug = parseReplaceSlug(replaceSlug);
-      const editToken = slug ? shares.find((s) => s.slug === slug)?.editToken : undefined;
-      if (slug && !editToken) {
-        setError("No edit token for that Share in this browser");
+      const targetShare = slug ? shares.find((s) => s.slug === slug) : undefined;
+      const editToken = slug ? legacyEditTokens[slug] : undefined;
+      if (slug && targetShare?.legacy === true && !editToken) {
+        setError("No Browser edit token for that legacy Share in this browser");
         return;
       }
+
       const res = await fetch("/api/publish", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ content, kind, replaceSlug: slug || undefined, editToken }),
+        body: JSON.stringify({
+          content,
+          kind,
+          replaceSlug: slug || undefined,
+          editToken,
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
         setError(data.error || "Publish failed");
         return;
       }
-      const publishedKind = data.kind as ArtifactKind;
-      const publishedBy = typeof data.publishedBy === "string" ? data.publishedBy : undefined;
-      if (!data.replaced) {
-        const next = [
-          {
-            slug: data.slug,
-            editToken: data.editToken,
-            createdAt: new Date().toISOString(),
-            kind: publishedKind,
-            publishedBy,
-          },
-          ...shares,
-        ];
-        setShares(next);
-        saveShares(next);
-      } else {
-        const next = shares.map((share) =>
-          share.slug === data.slug ? { ...share, kind: publishedKind } : share
-        );
-        setShares(next);
-        saveShares(next);
+
+      if (typeof data.editToken === "string" && data.slug) {
+        saveLegacyEditToken(data.slug, data.editToken);
+        setLegacyEditTokens(loadLegacyEditTokens());
       }
+
+      await loadShares();
       setPublishedSlug(data.slug);
       setContent("");
       setKind("html");
@@ -254,20 +273,27 @@ export default function Page() {
     }
   };
 
-  const remove = async (share: MyShare) => {
+  const remove = async (share: ServerShare) => {
     if (!confirm(`Delete /s/${share.slug}? The Short link will 404.`)) return;
-    const res = await fetch(`/api/shares/${share.slug}`, {
-      method: "DELETE",
-      headers: { "x-edit-token": share.editToken },
-    });
+    setSharesError("");
+    const headers: Record<string, string> = {};
+    if (share.legacy) {
+      const token = legacyEditTokens[share.slug];
+      if (!token) {
+        setSharesError("No Browser edit token for that legacy Share");
+        return;
+      }
+      headers["x-edit-token"] = token;
+    }
+    const res = await fetch(`/api/shares/${share.slug}`, { method: "DELETE", headers });
     if (res.ok || res.status === 404) {
-      const next = shares.filter((s) => s.slug !== share.slug);
-      setShares(next);
-      saveShares(next);
+      removeLegacyEditToken(share.slug);
+      setLegacyEditTokens(loadLegacyEditTokens());
+      await loadShares();
       if (publishedSlug === share.slug) setPublishedSlug("");
     } else {
       const data = await res.json().catch(() => ({}));
-      setError(data.error || "Delete failed");
+      setSharesError(data.error || "Delete failed");
     }
   };
 
@@ -297,6 +323,7 @@ export default function Page() {
         </span>
         <span className="publisher-bar">
           {publisherEmail && <span className="publisher-email">{publisherEmail}</span>}
+          <AddSkillPanel signedIn={signedIn} />
           <button className="ghost" onClick={signOut}>
             sign out
           </button>
@@ -429,35 +456,16 @@ export default function Page() {
         )}
       </main>
 
-      {shares.length > 0 && (
-        <section className="shares">
-          <h2>my shares — this browser</h2>
-          {shares.map((s) => (
-            <div className="share-row" key={s.slug}>
-              <a href={`/s/${s.slug}`} target="_blank" rel="noreferrer">
-                /s/{s.slug}
-              </a>
-              <span className="when">
-                {new Date(s.createdAt).toLocaleDateString("en-GB", {
-                  day: "2-digit",
-                  month: "short",
-                })}{" "}
-                · {s.kind}
-                {s.publishedBy ? ` · ${s.publishedBy}` : ""}
-              </span>
-              <button className="op" onClick={() => copy(`${origin}/s/${s.slug}`)}>
-                copy
-              </button>
-              <button className="op" onClick={() => startReplace(s.slug)}>
-                replace
-              </button>
-              <button className="op danger" onClick={() => remove(s)}>
-                delete
-              </button>
-            </div>
-          ))}
-        </section>
-      )}
+      <ConnectedTokens signedIn={signedIn} />
+      <MyShares
+        shares={shares}
+        origin={origin}
+        legacyEditTokens={legacyEditTokens}
+        onReplace={startReplace}
+        onDelete={remove}
+        onCopy={copy}
+        error={sharesError}
+      />
 
       <div className="marquee">
         <span className="track">
