@@ -15,6 +15,8 @@ export type ShareMeta = {
   createdAt: string;
   updatedAt: string;
   size: number;
+  /** Publisher email at create; absent on legacy Shares. */
+  publishedBy?: string;
   /** Current blob object key; new key on each replace avoids CDN stale reads. */
   blobPath?: string;
 };

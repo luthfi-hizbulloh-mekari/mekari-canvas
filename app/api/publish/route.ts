@@ -1,12 +1,14 @@
 import { nanoid } from "nanoid";
 import { isArtifactKind } from "@/lib/artifact-kind";
+import { getPublisherEmail } from "@/lib/publisher-session";
+import { authorizeShareMutation } from "@/lib/share-authz";
 import { getStorage, hashToken } from "@/lib/storage";
-import { checkUploadGate } from "@/lib/upload-gate";
 import { artifactBytes, validateArtifact } from "@/lib/validate";
 
 export async function POST(req: Request) {
-  if (!checkUploadGate(req)) {
-    return Response.json({ error: "Invalid organization code" }, { status: 401 });
+  const publisherEmail = await getPublisherEmail(req);
+  if (!publisherEmail) {
+    return Response.json({ error: "Publisher sign-in required" }, { status: 401 });
   }
 
   let body: { content?: unknown; kind?: unknown; replaceSlug?: string; editToken?: string };
@@ -38,27 +40,44 @@ export async function POST(req: Request) {
   try {
     const storage = getStorage();
     if (replaceSlug) {
-      const meta = await storage.getMeta(replaceSlug);
-      if (!meta) {
-        return Response.json({ error: "Share not found" }, { status: 404 });
+      const authz = await authorizeShareMutation(replaceSlug, editToken, publisherEmail);
+      if (!authz.ok) {
+        return Response.json({ error: authz.error }, { status: authz.status });
       }
-      if (!editToken || hashToken(editToken) !== meta.editTokenHash) {
-        return Response.json({ error: "Browser edit token mismatch" }, { status: 403 });
-      }
+      const { meta } = authz;
       if (meta.kind !== kind) {
         return Response.json({ error: "Artifact kind cannot change on Replace" }, { status: 422 });
       }
       await storage.put({ ...meta, size, updatedAt: now }, content);
-      return Response.json({ slug: meta.slug, replaced: true, kind });
+      return Response.json({
+        slug: meta.slug,
+        replaced: true,
+        kind,
+        publishedBy: meta.publishedBy,
+      });
     }
 
     const slug = nanoid(8);
     const newEditToken = nanoid(32);
     await storage.put(
-      { slug, kind, editTokenHash: hashToken(newEditToken), createdAt: now, updatedAt: now, size },
+      {
+        slug,
+        kind,
+        editTokenHash: hashToken(newEditToken),
+        createdAt: now,
+        updatedAt: now,
+        size,
+        publishedBy: publisherEmail,
+      },
       content
     );
-    return Response.json({ slug, editToken: newEditToken, replaced: false, kind });
+    return Response.json({
+      slug,
+      editToken: newEditToken,
+      replaced: false,
+      kind,
+      publishedBy: publisherEmail,
+    });
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     console.error("publish storage error:", detail, err);

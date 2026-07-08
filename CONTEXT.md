@@ -32,9 +32,17 @@ _Avoid_: Link, URL, permalink
 The 8-character random identifier in a Short link. Generated via nanoid — unguessable, URL-safe.
 _Avoid_: ID, code, hash
 
-**Organization code**:
-A lightweight shared secret (team password) required to publish a Share. Not full SSO — blocks drive-by abuse on a public deployment. Entered once per browser; session persisted in `localStorage`.
+**Publisher sign-in**:
+Google OAuth restricted to `@mekari.com`. Required to publish or delete a Share. Server-verified session — replaces the former shared **Organization code**. Homepage shows signed-in email and Sign out.
 _Avoid_: Auth, login, SSO, upload gate
+
+**Publisher**:
+A Mekari employee who has completed **Publisher sign-in** with a `@mekari.com` Google account.
+_Avoid_: User, member, employee (too broad)
+
+**Published by**:
+The Publisher's Google email, captured at Share create and stored in KV **Share** metadata. Immutable on **Replace**. Shown in **My Shares** only — not exposed on the public Short link.
+_Avoid_: Author, owner, creator
 
 **Blob store**:
 Vercel Blob holds Artifact bodies (HTML and Markdown). A separate lightweight index (Vercel KV) maps slug → blob path, **Artifact kind**, and metadata.
@@ -45,15 +53,15 @@ Overwriting an existing Share's Artifact in place — the Short link stays the s
 _Avoid_: Edit, update, revise
 
 **Delete**:
-Removing a Share entirely — its Short link returns 404. Same authorization as Replace: **Organization code** + matching **Browser edit token**.
+Removing a Share entirely — its Short link returns 404. Same authorization as Replace: **Publisher sign-in** + matching **Browser edit token**.
 _Avoid_: Remove, unpublish, archive
 
 **My Shares**:
-The list of Shares published from the current browser, derived from `localStorage`. Each row shows slug and **Artifact kind** (`html` or `md`). Clicking one prefills the Replace field for quick overwrite.
+The list of Shares published from the current browser, derived from `localStorage`. Each row shows slug, **Artifact kind** (`html` or `md`), and **Published by**. Clicking one prefills the Replace field for quick overwrite. Only visible after **Publisher sign-in** — the publish homepage requires sign-in before paste or upload.
 _Avoid_: History, dashboard, library
 
 **Browser edit token**:
-A per-Share secret stored only in the publisher's browser (`localStorage`) at create time. Required alongside **Organization code** to Replace that Share. Never shown for manual copy — lost browser storage means a new Share must be published.
+A per-Share secret stored only in the publisher's browser (`localStorage`) at create time. Required alongside **Publisher sign-in** to Replace or Delete that Share; session email must match **Published by**. Never shown for manual copy — lost browser storage means a new Share must be published.
 _Avoid_: Edit token, cookie, session
 
 ## Relationships
@@ -61,10 +69,10 @@ _Avoid_: Edit token, cookie, session
 - One **Share** has exactly one **Artifact** — either HTML or Markdown, not both
 - One **Short link** maps to exactly one **Share**
 - **Viewing** a Share requires only the Short link (unguessable slug) — no login
-- **Publishing** a Share requires the **Organization code**
+- **Publishing** a Share requires **Publisher sign-in** before any paste or upload on the homepage; create sets **Published by** from the session email
 - **Replace** keeps the same Short link; absent Replace target, publish creates a new Share
-- **Replace** requires **Organization code** + matching **Browser edit token** for that Share (auto-sent from `localStorage`)
-- **Delete** requires the same authorization as **Replace**
+- **Replace** requires **Publisher sign-in** + matching **Browser edit token** for that Share (auto-sent from `localStorage`); session email must match **Published by**; **Published by** unchanged
+- **Delete** requires the same authorization as **Replace** (session email must match **Published by**)
 - Each **Share** is served raw at its Short link — HTML Artifacts as `text/html`, Markdown Artifacts as `text/markdown`; no iframe wrapper
 
 ## Example dialogue
@@ -80,5 +88,7 @@ _Avoid_: Edit token, cookie, session
 
 ## Flagged ambiguities
 
-- "org-only" means link discipline + unguessable slugs, not network isolation or SSO — resolved for v1.
-- Replace authorization: **Organization code** + per-Share **Browser edit token** in `localStorage` only — no cross-browser fallback for v1.
+- "org-only" means link discipline + unguessable slugs, not network isolation — resolved for v1.
+- Replace authorization: **Publisher sign-in** (email must match **Published by**) + per-Share **Browser edit token** in `localStorage` only — no cross-browser fallback for v1.
+- **Organization code** (shared secret via `x-upload-gate`) superseded by **Publisher sign-in** — remove after Google OAuth ships.
+- Legacy Shares (no **Published by** in KV): **Replace** and **Delete** allowed for any `@mekari.com` **Publisher** with valid **Browser edit token** — grandfather only; new publishes always set **Published by**.

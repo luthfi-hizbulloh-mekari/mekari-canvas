@@ -1,23 +1,24 @@
-import { getStorage, hashToken } from "@/lib/storage";
-import { checkUploadGate } from "@/lib/upload-gate";
+import { getPublisherEmail } from "@/lib/publisher-session";
+import { authorizeShareMutation } from "@/lib/share-authz";
+import { getStorage } from "@/lib/storage";
 
 export async function DELETE(
   req: Request,
   { params }: { params: Promise<{ slug: string }> }
 ) {
-  if (!checkUploadGate(req)) {
-    return Response.json({ error: "Invalid organization code" }, { status: 401 });
+  const publisherEmail = await getPublisherEmail(req);
+  if (!publisherEmail) {
+    return Response.json({ error: "Publisher sign-in required" }, { status: 401 });
   }
+
   const { slug } = await params;
+  const editToken = req.headers.get("x-edit-token") ?? undefined;
+  const authz = await authorizeShareMutation(slug, editToken, publisherEmail);
+  if (!authz.ok) {
+    return Response.json({ error: authz.error }, { status: authz.status });
+  }
+
   const storage = getStorage();
-  const meta = await storage.getMeta(slug);
-  if (!meta) {
-    return Response.json({ error: "Share not found" }, { status: 404 });
-  }
-  const editToken = req.headers.get("x-edit-token");
-  if (!editToken || hashToken(editToken) !== meta.editTokenHash) {
-    return Response.json({ error: "Browser edit token mismatch" }, { status: 403 });
-  }
   await storage.delete(slug);
   return Response.json({ deleted: true });
 }

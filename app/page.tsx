@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Logo from "@/components/Logo";
+import { authClient } from "@/lib/auth-client";
 import type { ArtifactKind } from "@/lib/artifact-kind";
 import {
   MAX_ARTIFACT_BYTES,
@@ -10,10 +11,15 @@ import {
   validateArtifact,
 } from "@/lib/validate";
 
-type MyShare = { slug: string; editToken: string; createdAt: string; kind: ArtifactKind };
+type MyShare = {
+  slug: string;
+  editToken: string;
+  createdAt: string;
+  kind: ArtifactKind;
+  publishedBy?: string;
+};
 type StoredMyShare = Omit<MyShare, "kind"> & { kind?: ArtifactKind };
 
-const GATE_KEY = "canvas.gate";
 const SHARES_KEY = "canvas.shares";
 const SCRAMBLE = "abcdefghijklmnopqrstuvwxyz0123456789_-";
 
@@ -111,8 +117,6 @@ export default function Page() {
   const [source, setSource] = useState("");
   const [dragging, setDragging] = useState(false);
   const [pasteOpen, setPasteOpen] = useState(false);
-  const [orgCode, setOrgCode] = useState("");
-  const [orgCodeSaved, setOrgCodeSaved] = useState(false);
   const [replaceSlug, setReplaceSlug] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -120,6 +124,8 @@ export default function Page() {
   const [shares, setShares] = useState<MyShare[]>([]);
   const [copied, setCopied] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const { data: session } = authClient.useSession();
+  const publisherEmail = session?.user?.email ?? "";
 
   const origin = typeof location !== "undefined" ? location.origin : "";
   const shortLink = publishedSlug ? `${origin}/s/${publishedSlug}` : "";
@@ -133,11 +139,6 @@ export default function Page() {
 
   useEffect(() => {
     setShares(loadShares());
-    const saved = localStorage.getItem(GATE_KEY);
-    if (saved) {
-      setOrgCode(saved);
-      setOrgCodeSaved(true);
-    }
   }, []);
 
   const accept = useCallback((nextContent: string, name: string, nextKind?: ArtifactKind) => {
@@ -212,7 +213,7 @@ export default function Page() {
       }
       const res = await fetch("/api/publish", {
         method: "POST",
-        headers: { "content-type": "application/json", "x-upload-gate": orgCode },
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({ content, kind, replaceSlug: slug || undefined, editToken }),
       });
       const data = await res.json();
@@ -220,9 +221,8 @@ export default function Page() {
         setError(data.error || "Publish failed");
         return;
       }
-      localStorage.setItem(GATE_KEY, orgCode);
-      setOrgCodeSaved(true);
       const publishedKind = data.kind as ArtifactKind;
+      const publishedBy = typeof data.publishedBy === "string" ? data.publishedBy : undefined;
       if (!data.replaced) {
         const next = [
           {
@@ -230,6 +230,7 @@ export default function Page() {
             editToken: data.editToken,
             createdAt: new Date().toISOString(),
             kind: publishedKind,
+            publishedBy,
           },
           ...shares,
         ];
@@ -257,7 +258,7 @@ export default function Page() {
     if (!confirm(`Delete /s/${share.slug}? The Short link will 404.`)) return;
     const res = await fetch(`/api/shares/${share.slug}`, {
       method: "DELETE",
-      headers: { "x-upload-gate": orgCode, "x-edit-token": share.editToken },
+      headers: { "x-edit-token": share.editToken },
     });
     if (res.ok || res.status === 404) {
       const next = shares.filter((s) => s.slug !== share.slug);
@@ -276,6 +277,11 @@ export default function Page() {
     setTimeout(() => setCopied(false), 1200);
   };
 
+  const signOut = async () => {
+    await authClient.signOut();
+    window.location.href = "/sign-in";
+  };
+
   const armed = content.length > 0;
 
   return (
@@ -289,9 +295,11 @@ export default function Page() {
           <Logo size={15} color="#fff" />
           mekari<i>®</i> canvas
         </span>
-        <span>
-          <span className={`status-dot${orgCodeSaved ? " open" : ""}`} />
-          {orgCodeSaved ? "org code set" : "org code needed"}
+        <span className="publisher-bar">
+          {publisherEmail && <span className="publisher-email">{publisherEmail}</span>}
+          <button className="ghost" onClick={signOut}>
+            sign out
+          </button>
         </span>
       </header>
 
@@ -387,18 +395,6 @@ export default function Page() {
               </span>
             </div>
 
-            {!orgCodeSaved && (
-              <div className="field">
-                <label>organization code</label>
-                <input
-                  type="password"
-                  value={orgCode}
-                  placeholder="your org code — once per browser"
-                  onChange={(e) => setOrgCode(e.target.value)}
-                />
-              </div>
-            )}
-
             <div className="field">
               <label>replace — optional short link</label>
               <input
@@ -412,7 +408,7 @@ export default function Page() {
             <div className="actions">
               <button
                 className="publish"
-                disabled={busy || !artifactOk || !orgCode}
+                disabled={busy || !artifactOk}
                 onClick={publish}
               >
                 {busy ? "publishing…" : replaceSlug.trim() ? "replace" : "publish"}
@@ -447,6 +443,7 @@ export default function Page() {
                   month: "short",
                 })}{" "}
                 · {s.kind}
+                {s.publishedBy ? ` · ${s.publishedBy}` : ""}
               </span>
               <button className="op" onClick={() => copy(`${origin}/s/${s.slug}`)}>
                 copy
@@ -465,7 +462,7 @@ export default function Page() {
       <div className="marquee">
         <span className="track">
           {Array.from({ length: 2 }, () =>
-            "paste html or md — get a permanent link — no drafts — no logins — ".repeat(4)
+            "paste html or md — get a permanent link — mekari publishers — no drafts — ".repeat(4)
           ).join("")}
         </span>
       </div>
