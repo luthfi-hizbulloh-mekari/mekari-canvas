@@ -1,3 +1,4 @@
+import { ARTIFACT_KIND } from "@/lib/artifact-kind";
 import { loadLiveShare } from "@/lib/share-lookup";
 import { getStorage } from "@/lib/storage";
 
@@ -23,17 +24,19 @@ async function serve(
 ): Promise<Response> {
   const meta = await traceMeta(slug);
   if (!meta) return new Response("Not found", { status: 404 });
-  const artifact = await getStorage().open(meta);
-  if (!artifact) return new Response("Not found", { status: 404 });
+  const stream = await getStorage().open(meta);
+  if (!stream) return new Response("Not found", { status: 404 });
 
-  if (!includeBody) await artifact.stream.cancel();
-  return new Response(includeBody ? artifact.stream : null, {
-    headers: {
-      ...CORS_HEADERS,
-      "content-type": "application/zip",
-      "content-length": String(artifact.size),
-    },
+  const headers = new Headers({
+    ...CORS_HEADERS,
+    "content-type": ARTIFACT_KIND.trace.contentType,
   });
+  if (!includeBody) {
+    await stream.cancel();
+    // HEAD reports the authoritative size Canvas recorded, never a read-path length.
+    headers.set("content-length", String(meta.size));
+  }
+  return new Response(includeBody ? stream : null, { headers });
 }
 
 export async function GET(

@@ -38,14 +38,10 @@ export type ShareMeta = {
 
 export type StoredShareMeta = Omit<ShareMeta, "kind"> & { kind?: ArtifactKind };
 export type StoredShareIndex = Record<string, StoredShareMeta>;
-export type ShareArtifact = {
-  stream: ReadableStream<Uint8Array>;
-  size: number;
-};
 
 export interface StorageDriver {
   getMeta(slug: string): Promise<ShareMeta | null>;
-  open(meta: ShareMeta): Promise<ShareArtifact | null>;
+  open(meta: ShareMeta): Promise<ReadableStream<Uint8Array> | null>;
   put(meta: ShareMeta, body: Uint8Array | ReadableStream<Uint8Array>): Promise<void>;
   createTraceUpload(uploadId: string, localApiBase: string): Promise<string>;
   receiveTraceUpload(uploadId: string, body: ReadableStream<Uint8Array>): Promise<void>;
@@ -133,12 +129,11 @@ class LocalDriver implements StorageDriver {
       : this.legacyBlobFile(meta.slug);
   }
 
-  async open(meta: ShareMeta): Promise<ShareArtifact | null> {
+  async open(meta: ShareMeta): Promise<ReadableStream<Uint8Array> | null> {
     try {
       const file = this.artifactFile(meta);
-      const info = await fs.stat(file);
-      const stream = Readable.toWeb(createReadStream(file)) as ReadableStream<Uint8Array>;
-      return { stream, size: info.size };
+      await fs.stat(file);
+      return Readable.toWeb(createReadStream(file)) as ReadableStream<Uint8Array>;
     } catch {
       return null;
     }

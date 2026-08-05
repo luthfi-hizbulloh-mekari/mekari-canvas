@@ -71,7 +71,7 @@ export class VercelDriver implements StorageDriver {
     if (!result || result.statusCode !== 200 || !result.stream) {
       return null;
     }
-    return { stream: result.stream, size: result.blob.size };
+    return result.stream;
   }
 
   async createTraceUpload(uploadId: string, _localApiBase: string): Promise<string> {

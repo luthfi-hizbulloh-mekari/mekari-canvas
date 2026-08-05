@@ -22,15 +22,14 @@ export async function GET(
     });
   }
 
-  const artifact = await getStorage().open(meta);
-  if (artifact === null) {
+  const stream = await getStorage().open(meta);
+  if (stream === null) {
     return new Response("Not found", { status: 404 });
   }
   // Shares are served raw — no iframe wrapper or Markdown rendering (CONTEXT.md).
-  return new Response(artifact.stream, {
+  return new Response(stream, {
     headers: {
       "content-type": ARTIFACT_KIND[meta.kind].contentType,
-      "content-length": String(artifact.size),
       "cache-control": "no-store",
     },
   });

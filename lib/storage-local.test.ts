@@ -62,7 +62,7 @@ describe.sequential("LocalDriver compatibility", () => {
     expect(stored).not.toBeNull();
     const artifact = await storage.open(stored!);
     expect(artifact).not.toBeNull();
-    await expect(new Response(artifact!.stream).text()).resolves.toBe(body);
+    await expect(new Response(artifact).text()).resolves.toBe(body);
   });
 
   it("publishes each staged upload atomically and refuses overwrite", async () => {
