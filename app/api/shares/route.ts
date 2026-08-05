@@ -1,4 +1,5 @@
 import { getPublisherEmail } from "@/lib/publisher-session";
+import { isExpired } from "@/lib/share-lookup";
 import { getStorage } from "@/lib/storage";
 
 export async function GET(req: Request) {
@@ -9,7 +10,9 @@ export async function GET(req: Request) {
 
   try {
     const storage = getStorage();
-    const shares = await storage.listByPublisher(publisherEmail);
+    const shares = (await storage.listByPublisher(publisherEmail)).filter(
+      (meta) => !isExpired(meta)
+    );
     return Response.json({
       shares: shares.map((meta) => ({
         slug: meta.slug,
@@ -18,6 +21,7 @@ export async function GET(req: Request) {
         updatedAt: meta.updatedAt,
         size: meta.size,
         publishedBy: meta.publishedBy,
+        expiresAt: meta.expiresAt,
         legacy: !meta.publishedBy,
       })),
     });

@@ -1,13 +1,35 @@
-import { del, get, put, type BlobAccessType } from "@vercel/blob";
+import {
+  BlobNotFoundError,
+  copy,
+  del,
+  get,
+  head,
+  issueSignedToken,
+  list,
+  presignUrl,
+  put,
+  type BlobAccessType,
+} from "@vercel/blob";
 import { ARTIFACT_KIND, type ArtifactKind } from "@/lib/artifact-kind";
 import { getRedis } from "@/lib/redis";
-import type { ShareArtifact, ShareMeta, StorageDriver, StoredShareMeta } from "@/lib/storage";
+import {
+  DirectTraceUploadUnavailableError,
+  StagedTraceNotFoundError,
+} from "@/lib/storage-errors";
+import type { ShareMeta, StorageDriver, StoredShareMeta } from "@/lib/storage";
+import {
+  stagedTracePath,
+  STAGING_PREFIX,
+  STAGING_RETENTION_MS,
+} from "@/lib/trace-paths";
 
 const BLOB_PREFIX = "shares";
 const META_PREFIX = "canvas:share:";
 const PUBLISHER_SLUGS_PREFIX = "canvas:publisher:slugs:";
+const TRACE_EXPIRY_KEY = "canvas:trace:expiry";
+const UPLOAD_URL_TTL_MS = 15 * 60 * 1000;
 
-/** Must match the Blob store access mode chosen at creation (public is the default). */
+/** Text Artifacts follow the configured store default; traces explicitly use private access. */
 function blobAccess(): BlobAccessType {
   return process.env.BLOB_STORE_ACCESS?.toLowerCase() === "private" ? "private" : "public";
 }
@@ -28,10 +50,6 @@ function publisherSlugsKey(email: string): string {
   return `${PUBLISHER_SLUGS_PREFIX}${email}`;
 }
 
-async function readStream(stream: ReadableStream<Uint8Array>): Promise<string> {
-  return new Response(stream).text();
-}
-
 /**
  * Production driver: artifact bodies in Vercel Blob, slug metadata in Upstash Redis.
  * See docs/adr/0001-vercel-blob-kv-storage.md.
@@ -42,12 +60,9 @@ export class VercelDriver implements StorageDriver {
     return meta ? { ...meta, kind: meta.kind ?? "html" } : null;
   }
 
-  async getArtifact(slug: string): Promise<ShareArtifact | null> {
-    const meta = await this.getMeta(slug);
-    if (!meta) return null;
-
-    const path = meta.blobPath ?? legacyBlobPath(slug);
-    const access = blobAccess();
+  async open(meta: ShareMeta) {
+    const path = meta.blobPath ?? legacyBlobPath(meta.slug);
+    const access = meta.kind === "trace" ? "private" : blobAccess();
     const result = await get(path, {
       access,
       // Private stores can bypass CDN; public blobs rely on versioned pathnames.
@@ -56,30 +71,149 @@ export class VercelDriver implements StorageDriver {
     if (!result || result.statusCode !== 200 || !result.stream) {
       return null;
     }
-    return { body: await readStream(result.stream), meta };
+    return { stream: result.stream, size: result.blob.size };
   }
 
-  async put(meta: ShareMeta, body: string): Promise<void> {
+  async createTraceUpload(uploadId: string, _localApiBase: string): Promise<string> {
+    const pathname = stagedTracePath(uploadId);
+    const validUntil = Date.now() + UPLOAD_URL_TTL_MS;
+    const constraints = {
+      allowedContentTypes: [ARTIFACT_KIND.trace.contentType],
+      maximumSizeInBytes: ARTIFACT_KIND.trace.maxBytes,
+    };
+    const signedToken = await issueSignedToken({
+      pathname,
+      operations: ["put"],
+      validUntil,
+      ...constraints,
+    });
+    const { presignedUrl } = await presignUrl(signedToken, {
+      operation: "put",
+      pathname,
+      access: "private",
+      validUntil,
+      allowOverwrite: false,
+      addRandomSuffix: false,
+      ...constraints,
+    });
+    return presignedUrl;
+  }
+
+  async receiveTraceUpload(
+    _uploadId: string,
+    _body: ReadableStream<Uint8Array>
+  ): Promise<void> {
+    throw new DirectTraceUploadUnavailableError();
+  }
+
+  async stagedTraceSize(uploadId: string): Promise<number> {
+    try {
+      return (await head(stagedTracePath(uploadId))).size;
+    } catch (error) {
+      if (error instanceof BlobNotFoundError) throw new StagedTraceNotFoundError();
+      throw error;
+    }
+  }
+
+  async readStagedTraceRange(
+    uploadId: string,
+    start: number,
+    end: number
+  ): Promise<Uint8Array> {
+    const result = await get(stagedTracePath(uploadId), {
+      access: "private",
+      useCache: false,
+      headers: { range: `bytes=${start}-${end}` },
+    });
+    if (!result || !result.stream) throw new StagedTraceNotFoundError();
+    if (start > 0 && !result.headers.get("content-range")) {
+      await result.stream.cancel();
+      throw new Error("Private Blob store did not honor the trace validation Range request");
+    }
+    return new Uint8Array(await new Response(result.stream).arrayBuffer());
+  }
+
+  async deleteStagedTrace(uploadId: string): Promise<void> {
+    await del(stagedTracePath(uploadId)).catch(() => {});
+  }
+
+  async deleteStaleTraceUploads(now: number): Promise<number> {
+    const cutoff = now - STAGING_RETENTION_MS;
+    let cursor: string | undefined;
+    const stalePaths: string[] = [];
+    do {
+      const page = await list({ prefix: STAGING_PREFIX, cursor });
+      stalePaths.push(
+        ...page.blobs
+          .filter((blob) => blob.uploadedAt.getTime() < cutoff)
+          .map((blob) => blob.pathname)
+      );
+      cursor = page.hasMore ? page.cursor : undefined;
+    } while (cursor);
+    for (let at = 0; at < stalePaths.length; at += 100) {
+      await del(stalePaths.slice(at, at + 100));
+    }
+    return stalePaths.length;
+  }
+
+  private async commitMeta(
+    meta: ShareMeta,
+    previous: ShareMeta | null,
+    path: string
+  ): Promise<void> {
+    const redis = getRedis();
+    const transaction = redis.multi();
+    transaction.set(metaKey(meta.slug), { ...meta, blobPath: path });
+    if (meta.publishedBy && !previous) {
+      transaction.sadd(publisherSlugsKey(meta.publishedBy), meta.slug);
+    }
+    if (meta.kind === "trace" && meta.expiresAt) {
+      transaction.zadd(TRACE_EXPIRY_KEY, {
+        score: Date.parse(meta.expiresAt),
+        member: meta.slug,
+      });
+    }
+    await transaction.exec();
+  }
+
+  private async deletePrevious(
+    previous: ShareMeta | null,
+    nextPath: string
+  ): Promise<void> {
+    if (previous?.blobPath && previous.blobPath !== nextPath) {
+      await del(previous.blobPath).catch(() => {});
+    } else if (previous && !previous.blobPath) {
+      await del(legacyBlobPath(previous.slug)).catch(() => {});
+    }
+  }
+
+  async put(
+    meta: ShareMeta,
+    body: Uint8Array | ReadableStream<Uint8Array>
+  ): Promise<void> {
     const previous = await this.getMeta(meta.slug);
     const path = versionedBlobPath(meta.slug, meta.updatedAt, meta.kind);
 
-    await put(path, body, {
+    await put(path, body instanceof Uint8Array ? Buffer.from(body) : body, {
       access: blobAccess(),
       contentType: ARTIFACT_KIND[meta.kind].contentType,
       addRandomSuffix: false,
     });
 
-    if (previous?.blobPath && previous.blobPath !== path) {
-      await del(previous.blobPath).catch(() => {});
-    } else if (previous && !previous.blobPath) {
-      await del(legacyBlobPath(meta.slug)).catch(() => {});
-    }
+    await this.commitMeta(meta, previous, path);
+    await this.deletePrevious(previous, path);
+  }
 
-    await getRedis().set(metaKey(meta.slug), { ...meta, blobPath: path });
-
-    if (meta.publishedBy && !previous) {
-      await getRedis().sadd(publisherSlugsKey(meta.publishedBy), meta.slug);
-    }
+  async commitStagedTrace(meta: ShareMeta, uploadId: string): Promise<void> {
+    const previous = await this.getMeta(meta.slug);
+    const path = versionedBlobPath(meta.slug, meta.updatedAt, "trace");
+    await copy(stagedTracePath(uploadId), path, {
+      access: "private",
+      contentType: ARTIFACT_KIND.trace.contentType,
+      addRandomSuffix: false,
+    });
+    await this.commitMeta(meta, previous, path);
+    await this.deletePrevious(previous, path);
   }
 
   async delete(slug: string): Promise<void> {
@@ -89,11 +223,12 @@ export class VercelDriver implements StorageDriver {
     } else {
       await del(legacyBlobPath(slug)).catch(() => {});
     }
-    await getRedis().del(metaKey(slug));
-
     if (meta?.publishedBy) {
       await getRedis().srem(publisherSlugsKey(meta.publishedBy), slug);
     }
+    await getRedis().del(metaKey(slug));
+    // Remove this last so a partially failed delete remains eligible for a later sweep.
+    await getRedis().zrem(TRACE_EXPIRY_KEY, slug);
   }
 
   async listByPublisher(publisherEmail: string): Promise<ShareMeta[]> {
@@ -104,6 +239,12 @@ export class VercelDriver implements StorageDriver {
       if (meta) shares.push(meta);
     }
     return shares.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+  }
+
+  async expiredTraceSlugs(now: number): Promise<string[]> {
+    return getRedis().zrange<string[]>(TRACE_EXPIRY_KEY, 0, now, {
+      byScore: true,
+    });
   }
 }
 

@@ -20,7 +20,7 @@ Set up Mekari Canvas agent publish:
 4. Save the returned token to ~/.canvas/config.json as { "apiBase": "<apiBase>", "token": "<token>" }
 5. Confirm: run ~/.cursor/skills/mekari-canvas/scripts/mekari-canvas.sh list
 
-After setup, invoke /mekari-canvas publish on a .md or .html file to get a Short link.
+After setup, invoke /mekari-canvas publish on a .md, .html, or Playwright trace .zip to get a Short link.
 ```
 
 Replace `{MANIFEST_URL}`, `{API_BASE}`, and `{SETUP_CODE}` with values from the homepage.
@@ -39,6 +39,8 @@ Replace `{MANIFEST_URL}`, `{API_BASE}`, and `{SETUP_CODE}` with values from the 
 
 - `~/.canvas/config.json` — API base + Bearer token (harness-agnostic)
 - `~/.canvas/publish-manifest.json` — absolute file path → slug mapping for auto-Replace
+
+Playwright traces are sent as raw ZIP bytes through a once-only, immutable direct upload URL and expire 30 days after first publish. A failed commit retry mints a fresh upload URL. Replacing a trace preserves the original expiration; if an expired Share has already been swept, the helper creates a new Share and updates the manifest.
 
 ## Re-install
 

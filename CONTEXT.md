@@ -1,15 +1,15 @@
 # Canvas
 
-Internal Mekari tool for engineers to upload self-contained HTML visualizations and agent-facing Markdown, sharing both via permanent short links — replacing ephemeral third-party HTML hosts and ad-hoc paste targets for rich content like PR summaries. Deployed at `mekari-canvas.vercel.app`.
+Internal Mekari tool for engineers to upload self-contained HTML visualizations, agent-facing Markdown, and Playwright traces, sharing them via public short links — replacing ephemeral third-party HTML hosts and ad-hoc paste targets for rich content like PR summaries and test diagnostics. Deployed at `mekari-canvas.vercel.app`.
 
 ## Language
 
 **Share**:
-A single published Artifact (HTML or Markdown) accessible via a unique short URL.
+A single published Artifact (HTML, Markdown, or Playwright trace) accessible via a unique Short link.
 _Avoid_: Page, post, doc, upload
 
 **Artifact**:
-The file body stored for a Share. Two kinds — **HTML Artifact** and **Markdown Artifact** (see below). Maximum size: 500 KB each. No separate uploaded asset files.
+A stored payload for a Share. Three kinds — **HTML Artifact**, **Markdown Artifact**, and **Playwright Trace Artifact** (see below). HTML and Markdown Artifacts are limited to 500 KB; Playwright Trace Artifacts are limited to 50 MB. No separate uploaded asset files.
 _Avoid_: File, document, content
 
 **HTML Artifact**:
@@ -20,17 +20,33 @@ _Avoid_: HTML file, visualization file
 Raw `.md` body for **agent** consumption — not styled for human reading. Stored and served as-is (`text/markdown`). No `<html` requirement. Reject if empty or whitespace-only after trim. Typical use: agent-readable PR summaries, structured notes, copy-paste into other tools.
 _Avoid_: MD file, text doc
 
+**Playwright Trace Artifact**:
+A Playwright-generated trace ZIP intended for interactive inspection in Playwright Trace Viewer. It is a trace payload, not a general-purpose ZIP upload, is accepted only when Canvas can recognize its supported trace structure, is limited to 50 MB, and is publicly viewable by anyone holding its Short link.
+_Avoid_: ZIP file, archive, attachment
+
 **Artifact kind**:
-Whether a Share holds an **HTML Artifact** or **Markdown Artifact** — stored as `html` or `md`. Set at first publish — detected by file extension on upload (`.html`/`.htm` → `html`, `.md` → `md`) or by content sniff on paste (contains `<html` or `<!DOCTYPE` in first 2 KB → `html`, otherwise → `md`). Immutable on **Replace** — cannot overwrite an HTML Share with Markdown or vice versa. Shares created before Markdown support may lack kind in storage — treat missing kind as `html`.
+Whether a Share holds an **HTML Artifact**, **Markdown Artifact**, or **Playwright Trace Artifact** — stored as `html`, `md`, or `trace`. Set at first publish — detected by file extension on upload (`.html`/`.htm` → `html`, `.md` → `md`, `.zip` → candidate `trace`) or by content sniff on paste for text artifacts; a ZIP becomes a Trace Artifact only after trace-structure validation. Immutable on **Replace** — cannot overwrite one kind with another. Shares created before Markdown support may lack kind in storage — treat missing kind as `html`.
 _Avoid_: Format, type, mime
 
 **Short link**:
-The permanent public URL that serves an Artifact (e.g. `https://mekari-canvas.vercel.app/s/x7k9m2p4`). Same `/s/{slug}` path for both HTML and Markdown Shares — response `Content-Type` differs. Slug is 8 characters, randomly generated — not user-chosen.
+The public URL for a Share (e.g. `https://mekari-canvas.vercel.app/s/x7k9m2p4`). It remains stable for the Share's lifetime. HTML and Markdown Short links serve their Artifact bodies; a Playwright Trace Short link opens the external Trace Viewer, which fetches the trace from the Share's **Raw trace endpoint**. Slug is 8 characters, randomly generated — not user-chosen.
 _Avoid_: Link, URL, permalink
 
 **Slug**:
 The 8-character random identifier in a Short link. Generated via nanoid — unguessable, URL-safe.
 _Avoid_: ID, code, hash
+
+**Raw trace endpoint**:
+The non-canonical, public `/s/{slug}/trace` URL for a Playwright Trace Artifact that returns the stored ZIP to Trace Viewer while the underlying Blob remains private. It is CORS-enabled for the external viewer, supports the viewer's remote-trace fetch, and is not the Share link people are expected to copy; anyone holding the Share link can still fetch or download the raw bytes.
+_Avoid_: Download link, ZIP link, asset URL
+
+**Trace expiration**:
+The 30-day retention window for a Playwright Trace Share, measured from its first publish. Replacing an active trace does not change the expiration date; the expiration date is shown to Publishers and returned by the Agent API. Requests enforce the deadline immediately, and a daily sweeper permanently deletes the Share and its ZIP after the window, so the expired Short link cannot be replaced or reactivated.
+_Avoid_: TTL, timeout, archive policy
+
+**Trace structure validation**:
+A best-effort server-side check that a candidate ZIP has a supported Playwright trace structure without extracting or executing its contents or pinning it to a Playwright release. Unrecognized ZIPs are rejected; support may expand as Playwright trace formats evolve.
+_Avoid_: ZIP validation, malware scan, unpacking
 
 **Publisher sign-in**:
 Google OAuth restricted to `@mekari.com`. Required to publish or delete a Share. Server-verified session — replaces the former shared **Organization code**. Homepage shows signed-in email and Sign out.
@@ -45,11 +61,11 @@ The Publisher's Google email, captured at Share create and stored in KV **Share*
 _Avoid_: Author, owner, creator
 
 **Blob store**:
-Vercel Blob holds Artifact bodies (HTML and Markdown). A separate lightweight index (Vercel KV) maps slug → blob path, **Artifact kind**, and metadata.
+Vercel Blob holds Artifact payloads (HTML, Markdown, and Playwright trace ZIPs). A separate lightweight index (Vercel KV) maps slug → blob path, **Artifact kind**, and metadata.
 _Avoid_: Database, S3, filesystem
 
 **Replace**:
-Overwriting an existing Share's Artifact in place — the Short link stays the same. Optional field on publish: paste an existing Short link to target.
+Overwriting an existing Share's Artifact in place — the Short link stays the same. Optional field on publish: paste an existing Short link to target. Replacing an active Playwright Trace Artifact does not extend its existing expiration date.
 _Avoid_: Edit, update, revise
 
 **Delete**:
@@ -57,7 +73,7 @@ Removing a Share entirely — its Short link returns 404. Same authorization as 
 _Avoid_: Remove, unpublish, archive
 
 **My Shares**:
-The list of Shares published by the signed-in **Publisher**, fetched from the server (**Agent API** list). Each row shows slug, **Artifact kind** (`html` or `md`), and **Published by**. Clicking one prefills the Replace field for quick overwrite. Only visible after **Publisher sign-in**.
+The list of Shares published by the signed-in **Publisher**, fetched from the server (**Agent API** list). Each row shows slug, **Artifact kind** (`html`, `md`, or `trace`), and **Published by**; Playwright Trace rows also show their expiration date. Clicking one prefills the Replace field for quick overwrite. Only visible after **Publisher sign-in**.
 _Avoid_: History, dashboard, library
 
 **Browser edit token**:
@@ -81,11 +97,11 @@ Public thin JSON hosted on the Canvas site (`/setup/manifest.json`) listing API 
 _Avoid_: Config file, README, integration doc
 
 **Agent publish**:
-Creating or mutating a Share via the **Agent API** using a **Publisher API token**, instead of the signed-in homepage paste/upload flow.
+Creating or mutating any supported Share Artifact via the **Agent API** using a **Publisher API token**, instead of the signed-in homepage paste/upload flow. Playwright Trace Artifacts are uploaded as binary payloads through this path.
 _Avoid_: MCP publish, CLI upload, programmatic upload
 
 **Agent API**:
-Harness-agnostic HTTP endpoints for Share create, Replace, Delete, and list — authenticated by **Publisher API token**. Same storage and Short links as browser publish; first consumer is the **`/mekari-canvas`** Cursor skill.
+Harness-agnostic HTTP endpoints for Share create, Replace, Delete, and list — authenticated by **Publisher API token**. Same storage and Short links as browser publish; HTML/Markdown use text payloads and Playwright Trace Artifacts use binary file uploads. First consumer is the **`/mekari-canvas`** Cursor skill.
 _Avoid_: MCP server, SDK, integration
 
 **Add skill**:
@@ -93,19 +109,28 @@ Homepage action for a signed-in **Publisher** — mints a **Setup code** and ope
 _Avoid_: Connect, install, link account
 
 **Mekari Canvas skill**:
-The harness entry point for **Agent publish** — invoked as **`/mekari-canvas`**. Supports explicit subcommands (`publish`, `list`, `delete`, `replace`, `setup`) or freeform intent when context is clear (e.g. attached handoff file). Installed user-wide so it works from any repo.
+The harness entry point for **Agent publish** — invoked as **`/mekari-canvas`**. Supports explicit subcommands (`publish`, `list`, `delete`, `replace`, `setup`) or freeform intent when context is clear (e.g. attached handoff file or Playwright trace ZIP). Installed user-wide so it works from any repo.
 _Avoid_: Canvas skill, publish skill, MCP tool
 
 ## Relationships
 
-- One **Share** has exactly one **Artifact** — either HTML or Markdown, not both
+- One **Share** has exactly one **Artifact** — HTML, Markdown, or Playwright trace
 - One **Short link** maps to exactly one **Share**
 - **Viewing** a Share requires only the Short link (unguessable slug) — no login
 - **Publishing** a Share requires **Publisher sign-in** before any paste or upload on the homepage; create sets **Published by** from the session email
+- Both homepage publishing and **Agent publish** can create or Replace HTML, Markdown, and Playwright Trace Artifacts
+- Playwright Trace Artifact uploads use a binary file contract; an upload is not a base64- or JSON-encoded text Artifact
 - **Replace** keeps the same Short link; absent Replace target, publish creates a new Share
 - **Replace** requires **Publisher sign-in** or **Publisher API token**; session or token identity must match **Published by**; **Published by** unchanged on Replace
+- An active Playwright Trace **Share** keeps its original **Trace expiration** when replaced; after expiration and sweeping, its Short link and raw endpoint return 404 and a new Share is required
+- A candidate ZIP must pass **Trace structure validation** before it becomes a Playwright Trace Artifact
+- **Trace expiration** is visible in **My Shares** and included in publish/list responses
+- **Trace expiration** is enforced at request time and finalized by a daily cleanup sweep
 - **Delete** requires the same authorization as **Replace**
-- Each **Share** is served raw at its Short link — HTML Artifacts as `text/html`, Markdown Artifacts as `text/markdown`; no iframe wrapper
+- HTML and Markdown **Shares** are served raw at their Short links — HTML Artifacts as `text/html`, Markdown Artifacts as `text/markdown`; no iframe wrapper
+- A Playwright Trace **Share** redirects from its Short link to Playwright Trace Viewer; Trace Viewer fetches the ZIP from the Share's **Raw trace endpoint**
+- The **Raw trace endpoint** is public and CORS-enabled for Playwright Trace Viewer, while its underlying Blob storage is private
+- The trace redirect is a convenience boundary, not download prevention; link-holders can fetch the **Raw trace endpoint**
 - **Agent publish** Replace and Delete require **Publisher API token** + matching **Published by**
 - **Setup code** exchanges once for one **Publisher API token** per harness setup; revocable from the homepage independently of **Publisher sign-in**
 - Each **Add skill** setup mints a distinct **Publisher API token** for that machine/harness — revoking one does not invalidate others

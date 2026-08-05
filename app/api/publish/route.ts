@@ -1,9 +1,8 @@
-import { nanoid } from "nanoid";
-import { isArtifactKind } from "@/lib/artifact-kind";
+import { getApiBase } from "@/lib/api-base";
+import { parsePublishRequest } from "@/lib/publish-request";
+import { PublishError, publishShare } from "@/lib/publish-share";
 import { getPublisherEmail } from "@/lib/publisher-session";
-import { authorizeShareMutation } from "@/lib/share-authz";
-import { getStorage } from "@/lib/storage";
-import { artifactBytes, validateArtifact } from "@/lib/validate";
+import { StorageMisconfiguredError } from "@/lib/storage-errors";
 
 export async function POST(req: Request) {
   const publisherEmail = await getPublisherEmail(req);
@@ -14,76 +13,30 @@ export async function POST(req: Request) {
     );
   }
 
-  let body: { content?: unknown; kind?: unknown; replaceSlug?: string; editToken?: string };
+  let body: unknown;
   try {
     body = await req.json();
   } catch {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  if (!isArtifactKind(body.kind)) {
-    return Response.json({ error: "Invalid Artifact kind" }, { status: 400 });
-  }
-  if (typeof body.content !== "string") {
-    return Response.json({ error: "Artifact content must be a string" }, { status: 400 });
-  }
-
-  const kind = body.kind;
-  const content = body.content;
-  const replaceSlug = typeof body.replaceSlug === "string" ? body.replaceSlug : "";
-  const editToken = typeof body.editToken === "string" ? body.editToken : undefined;
-  const invalid = validateArtifact(content, kind);
-  if (invalid) {
-    return Response.json({ error: invalid }, { status: 422 });
-  }
-
-  const now = new Date().toISOString();
-  const size = artifactBytes(content);
+  const parsed = parsePublishRequest(body);
+  if (!parsed.ok) return Response.json({ error: parsed.error }, { status: 400 });
 
   try {
-    const storage = getStorage();
-    if (replaceSlug) {
-      const authz = await authorizeShareMutation(replaceSlug, editToken, publisherEmail);
-      if (!authz.ok) {
-        return Response.json({ error: authz.error }, { status: authz.status });
-      }
-      const { meta } = authz;
-      if (meta.kind !== kind) {
-        return Response.json({ error: "Artifact kind cannot change on Replace" }, { status: 422 });
-      }
-      await storage.put({ ...meta, size, updatedAt: now }, content);
-      return Response.json({
-        slug: meta.slug,
-        replaced: true,
-        kind,
-        publishedBy: meta.publishedBy,
-      });
-    }
-
-    const slug = nanoid(8);
-    await storage.put(
-      {
-        slug,
-        kind,
-        editTokenHash: "",
-        createdAt: now,
-        updatedAt: now,
-        size,
-        publishedBy: publisherEmail,
-      },
-      content
-    );
+    const result = await publishShare(parsed.value, publisherEmail);
     return Response.json({
-      slug,
-      replaced: false,
-      kind,
-      publishedBy: publisherEmail,
+      ...result,
+      shortLink: `${getApiBase(req)}/s/${result.slug}`,
     });
   } catch (err) {
+    if (err instanceof PublishError) {
+      return Response.json({ error: err.message, code: err.code }, { status: err.status });
+    }
     const detail = err instanceof Error ? err.message : String(err);
     console.error("publish storage error:", detail, err);
     return Response.json(
-      { error: detail.includes("misconfigured") ? detail : "Storage unavailable" },
+      { error: err instanceof StorageMisconfiguredError ? detail : "Storage unavailable" },
       { status: 503 }
     );
   }

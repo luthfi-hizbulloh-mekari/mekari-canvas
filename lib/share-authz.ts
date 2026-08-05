@@ -1,4 +1,5 @@
-import { getStorage, hashToken, type ShareMeta } from "@/lib/storage";
+import { loadLiveShare } from "@/lib/share-lookup";
+import { hashToken, type ShareMeta } from "@/lib/storage";
 
 type AuthzOk = { ok: true; meta: ShareMeta };
 type AuthzErr = { ok: false; status: 404 | 403; error: string };
@@ -8,8 +9,7 @@ export async function authorizeShareMutation(
   editToken: string | undefined,
   publisherEmail: string
 ): Promise<AuthzOk | AuthzErr> {
-  const storage = getStorage();
-  const meta = await storage.getMeta(slug);
+  const meta = await loadLiveShare(slug);
   if (!meta) {
     return { ok: false, status: 404, error: "Share not found" };
   }

@@ -31,13 +31,43 @@ api() {
 
 detect_kind() {
   local file="$1"
-  case "${file##*.}" in
+  local extension
+  extension=$(printf '%s' "${file##*.}" | tr '[:upper:]' '[:lower:]')
+  case "$extension" in
     md) echo md ;;
     html|htm) echo html ;;
+    zip) echo trace ;;
     *)
       if head -c 2048 "$file" | grep -qiE '<html|<!DOCTYPE'; then echo html; else echo md; fi
       ;;
   esac
+}
+
+publish_request() {
+  local payload="$1" response_file
+  response_file=$(mktemp)
+  PUBLISH_STATUS=$(curl -sS -o "$response_file" -w '%{http_code}' -X POST \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$payload" \
+    "$API_BASE/api/publish")
+  PUBLISH_BODY=$(<"$response_file")
+  PUBLISH_ERROR_CODE=$(echo "$PUBLISH_BODY" | jq -r '.code // empty' 2>/dev/null || true)
+  rm -f "$response_file"
+}
+
+stage_trace_upload() {
+  local file="$1" upload upload_url
+  upload=$(api POST /api/trace-uploads)
+  TRACE_UPLOAD_ID=$(echo "$upload" | jq -r '.uploadId // empty')
+  upload_url=$(echo "$upload" | jq -r '.uploadUrl // empty')
+  [[ -n "$TRACE_UPLOAD_ID" && -n "$upload_url" ]] || die "invalid trace upload response"
+
+  local curl_args=(-sf -H "Content-Type: application/zip" --upload-file "$file")
+  if [[ "$upload_url" == "$API_BASE/api/trace-uploads/"* ]]; then
+    curl_args+=(-H "Authorization: Bearer $TOKEN")
+  fi
+  curl "${curl_args[@]}" "$upload_url" >/dev/null
 }
 
 read_manifest_slug() {
@@ -129,32 +159,59 @@ cmd_publish() {
   [[ -n "$file" && -f "$file" ]] || die "usage: mekari-canvas publish [--new] [--replace <slug>] <file>"
 
   load_config
-  local kind content slug
+  local kind slug upload_id="" content=""
   kind=$(detect_kind "$file")
-  content=$(cat "$file")
 
   if [[ "$force_new" == false && -z "$replace_slug" ]]; then
     replace_slug=$(read_manifest_slug "$file" || true)
   fi
 
-  local payload
-  if [[ -n "$replace_slug" ]]; then
-    payload=$(jq -n --arg content "$content" --arg kind "$kind" --arg slug "$replace_slug" \
-      '{content: $content, kind: $kind, replaceSlug: $slug}')
+  if [[ "$kind" == trace ]]; then
+    stage_trace_upload "$file"
+    upload_id="$TRACE_UPLOAD_ID"
   else
-    payload=$(jq -n --arg content "$content" --arg kind "$kind" '{content: $content, kind: $kind}')
+    content=$(<"$file")
   fi
 
-  local resp
-  resp=$(api POST /api/publish -d "$payload")
-  slug=$(echo "$resp" | jq -r '.slug')
+  local payload
+  if [[ "$kind" == trace ]]; then
+    payload=$(jq -n --arg uploadId "$upload_id" --arg slug "$replace_slug" \
+      '{kind: "trace", uploadId: $uploadId} + (if $slug == "" then {} else {replaceSlug: $slug} end)')
+  else
+    payload=$(jq -n --arg content "$content" --arg kind "$kind" --arg slug "$replace_slug" \
+      '{content: $content, kind: $kind} + (if $slug == "" then {} else {replaceSlug: $slug} end)')
+  fi
+
+  publish_request "$payload"
+  if [[ "$PUBLISH_STATUS" == 404 && "$PUBLISH_ERROR_CODE" == share_not_found && -n "$replace_slug" ]]; then
+    remove_manifest_slug "$replace_slug"
+    replace_slug=""
+    if [[ "$kind" == trace ]]; then
+      # The failed commit consumes its immutable staged upload; retry with a fresh one.
+      stage_trace_upload "$file"
+      upload_id="$TRACE_UPLOAD_ID"
+      payload=$(jq -n --arg uploadId "$upload_id" '{kind: "trace", uploadId: $uploadId}')
+    else
+      payload=$(jq -n --arg content "$content" --arg kind "$kind" \
+        '{content: $content, kind: $kind}')
+    fi
+    publish_request "$payload"
+  fi
+  if [[ "$PUBLISH_STATUS" -lt 200 || "$PUBLISH_STATUS" -ge 300 ]]; then
+    local message
+    message=$(echo "$PUBLISH_BODY" | jq -r '.error // "publish failed"' 2>/dev/null || true)
+    die "$message (HTTP $PUBLISH_STATUS)"
+  fi
+
+  slug=$(echo "$PUBLISH_BODY" | jq -r '.slug // empty')
+  [[ -n "$slug" ]] || die "invalid publish response"
   write_manifest_slug "$file" "$slug"
   echo "${API_BASE}/s/${slug}"
 }
 
 cmd_list() {
   load_config
-  api GET /api/shares | jq -r '.shares[] | "\(.slug)\t\(.kind)\t\(.updatedAt)"' | column -t -s $'\t' 2>/dev/null \
+  api GET /api/shares | jq -r '.shares[] | "\(.slug)\t\(.kind)\t\(.updatedAt)\t\(.expiresAt // \"permanent\")"' | column -t -s $'\t' 2>/dev/null \
     || api GET /api/shares | jq .
 }
 

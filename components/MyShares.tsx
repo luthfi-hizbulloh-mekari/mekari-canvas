@@ -8,6 +8,7 @@ export type ServerShare = {
   createdAt: string;
   updatedAt: string;
   publishedBy?: string;
+  expiresAt?: string;
   legacy?: boolean;
 };
 
@@ -48,6 +49,13 @@ export default function MyShares({
             })}{" "}
             · {s.kind}
             {s.publishedBy ? ` · ${s.publishedBy}` : " · legacy"}
+            {s.expiresAt
+              ? ` · expires ${new Date(s.expiresAt).toLocaleDateString("en-GB", {
+                  day: "2-digit",
+                  month: "short",
+                  year: "numeric",
+                })}`
+              : ""}
             {s.legacy && !legacyEditTokens[s.slug] ? " · no edit token" : ""}
           </span>
           <button className="op" onClick={() => onCopy(`${origin}/s/${s.slug}`)}>

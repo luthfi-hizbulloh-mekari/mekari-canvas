@@ -1,18 +1,18 @@
 ---
 name: mekari-canvas
 description: >-
-  Publish and manage Mekari Canvas Shares (HTML or Markdown Artifacts) via the
+  Publish and manage Mekari Canvas Shares (HTML, Markdown, or Playwright Trace Artifacts) via the
   Agent API. Use when the user invokes /mekari-canvas, wants to publish a
   handoff doc, list Shares, replace, or delete. Supports setup on first use.
 ---
 
 # Mekari Canvas
 
-Agent publish for [Mekari Canvas](https://mekari-canvas.vercel.app) — permanent Short links for HTML visualizations and agent-facing Markdown.
+Agent publish for [Mekari Canvas](https://mekari-canvas.vercel.app) — Short links for HTML visualizations, agent-facing Markdown, and Playwright traces.
 
 ## When to use
 
-- User says `/mekari-canvas publish` on an attached `.md` or `.html` file
+- User says `/mekari-canvas publish` on an attached `.md`, `.html`, or Playwright trace `.zip`
 - User wants a Short link for a handoff doc without opening the website
 - User asks to list, replace, or delete their Canvas Shares
 
@@ -53,10 +53,15 @@ All authenticated calls use `Authorization: Bearer <token>` from `~/.canvas/conf
 | Method | Path | Body |
 |--------|------|------|
 | POST | `/api/publish` | `{ content, kind: "html"\|"md", replaceSlug? }` |
+| POST | `/api/trace-uploads` | —; returns `{ uploadId, uploadUrl }` |
+| PUT | returned `uploadUrl` | raw ZIP bytes with `Content-Type: application/zip` |
+| POST | `/api/publish` | `{ kind: "trace", uploadId, replaceSlug? }` |
 | GET | `/api/shares` | — |
 | DELETE | `/api/shares/:slug` | — |
 
 Response includes `slug` — Short link is `{apiBase}/s/{slug}`.
+
+Trace publishing is always three steps: mint an upload URL, PUT the ZIP bytes directly, then commit with `uploadId`. Each staged upload is immutable and once-only; mint a fresh upload URL before retrying a failed commit. Never put trace bytes in JSON or base64. Trace Shares expire 30 days after first publish; Replace keeps the original expiration.
 
 ## Publish manifest
 
@@ -64,11 +69,13 @@ Maintain `~/.canvas/publish-manifest.json` mapping **absolute file path → slug
 
 ## Rules
 
-- **Artifact kind** is immutable on Replace (`.md` → `md`, `.html` → `html`).
+- **Artifact kind** is immutable on Replace (`.md` → `md`, `.html` → `html`, trace `.zip` → `trace`).
+- `.zip` is accepted only when Canvas recognizes Playwright trace structure; arbitrary ZIPs are rejected.
 - **Published by** is set at create from the token owner — cannot change on Replace.
+- If auto-Replace gets 404 because a trace expired and was swept, remove the path mapping and retry as a new Share. The bundled script does this automatically.
 - Return the Short link to the user after publish.
 - Legacy Shares without **Published by** are not manageable via Agent API.
 
 ## Freeform intent
 
-When the user attaches a handoff `.md` and says "publish this to canvas" without a subcommand, run `publish` on the attached file path.
+When the user attaches a handoff `.md` or Playwright trace `.zip` and says "publish this to canvas" without a subcommand, run `publish` on the attached file path.

@@ -6,13 +6,9 @@ import ConnectedTokens from "@/components/ConnectedTokens";
 import MyShares, { type ServerShare } from "@/components/MyShares";
 import Logo from "@/components/Logo";
 import { authClient } from "@/lib/auth-client";
-import type { ArtifactKind } from "@/lib/artifact-kind";
-import {
-  MAX_ARTIFACT_BYTES,
-  artifactBytes,
-  detectArtifactKind,
-  validateArtifact,
-} from "@/lib/validate";
+import { checkDraft, type Draft } from "@/lib/draft";
+import { publishDraft } from "@/lib/publish-draft";
+import { detectTextArtifactKind, validateTextArtifact } from "@/lib/validate";
 
 const LEGACY_TOKENS_KEY = "canvas.legacy-edit-tokens";
 
@@ -48,16 +44,6 @@ function parseReplaceSlug(input: string): string {
 
 function formatBytes(n: number): string {
   return n >= 1024 ? `${(n / 1024).toFixed(1)} KB` : `${n} B`;
-}
-
-function validationLabel(
-  error: string | null,
-  kind: ArtifactKind,
-  isWithinSizeCap: boolean
-): string {
-  if (!error) return "✓ valid";
-  if (!isWithinSizeCap) return "× over 500kb";
-  return kind === "html" ? "× not html" : "× empty md";
 }
 
 function useScramble(target: string) {
@@ -113,9 +99,7 @@ function CursorGlow() {
 }
 
 export default function Page() {
-  const [content, setContent] = useState("");
-  const [kind, setKind] = useState<ArtifactKind>("html");
-  const [source, setSource] = useState("");
+  const [draft, setDraft] = useState<Draft | null>(null);
   const [dragging, setDragging] = useState(false);
   const [pasteOpen, setPasteOpen] = useState(false);
   const [replaceSlug, setReplaceSlug] = useState("");
@@ -135,11 +119,7 @@ export default function Page() {
   const shortLink = publishedSlug ? `${origin}/s/${publishedSlug}` : "";
   const scrambled = useScramble(shortLink);
 
-  const byteLength = artifactBytes(content);
-  const isWithinSizeCap = byteLength <= MAX_ARTIFACT_BYTES;
-  const validationError = content ? validateArtifact(content, kind) : "Artifact required";
-  const artifactOk = content.length > 0 && isWithinSizeCap && validationError === null;
-  const statusLabel = validationLabel(validationError, kind, isWithinSizeCap);
+  const draftCheck = checkDraft(draft);
 
   const loadShares = useCallback(async () => {
     if (!signedIn) {
@@ -169,10 +149,8 @@ export default function Page() {
     loadShares();
   }, [loadShares]);
 
-  const accept = useCallback((nextContent: string, name: string, nextKind?: ArtifactKind) => {
-    setContent(nextContent);
-    setKind(nextKind ?? detectArtifactKind(nextContent, name));
-    setSource(name);
+  const acceptText = useCallback((text: string, source: string) => {
+    setDraft({ kind: detectTextArtifactKind(text, source), source, text });
     setPublishedSlug("");
     setError("");
     setPasteOpen(false);
@@ -180,9 +158,16 @@ export default function Page() {
 
   const readFile = useCallback(
     (file: File) => {
-      file.text().then((t) => accept(t, file.name));
+      if (file.name.toLowerCase().endsWith(".zip")) {
+        setDraft({ kind: "trace", source: file.name, file });
+        setPublishedSlug("");
+        setError("");
+        setPasteOpen(false);
+        return;
+      }
+      file.text().then((text) => acceptText(text, file.name));
     },
-    [accept]
+    [acceptText]
   );
 
   useEffect(() => {
@@ -203,8 +188,7 @@ export default function Page() {
       const target = e.target as HTMLElement;
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
       const text = e.clipboardData?.getData("text") || "";
-      const pastedKind = detectArtifactKind(text);
-      if (pastedKind === "html") accept(text, "clipboard", pastedKind);
+      if (detectTextArtifactKind(text) === "html") acceptText(text, "clipboard");
     };
     document.addEventListener("dragover", onDragOver);
     document.addEventListener("dragleave", onDragLeave);
@@ -216,14 +200,12 @@ export default function Page() {
       document.removeEventListener("drop", onDrop);
       document.removeEventListener("paste", onPaste);
     };
-  }, [accept, readFile]);
+  }, [acceptText, readFile]);
 
   const startReplace = useCallback((slug: string) => {
     setReplaceSlug(slug);
     setPublishedSlug("");
-    setContent("");
-    setKind("html");
-    setSource("");
+    setDraft(null);
     setError("");
     requestAnimationFrame(() => fileInput.current?.click());
   }, []);
@@ -240,21 +222,11 @@ export default function Page() {
         return;
       }
 
-      const res = await fetch("/api/publish", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          content,
-          kind,
-          replaceSlug: slug || undefined,
-          editToken,
-        }),
+      if (!draft) return;
+      const data = await publishDraft(draft, {
+        replaceSlug: slug || undefined,
+        editToken,
       });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || "Publish failed");
-        return;
-      }
 
       if (typeof data.editToken === "string" && data.slug) {
         saveLegacyEditToken(data.slug, data.editToken);
@@ -263,11 +235,10 @@ export default function Page() {
 
       await loadShares();
       setPublishedSlug(data.slug);
-      setContent("");
-      setKind("html");
+      setDraft(null);
       setReplaceSlug("");
-    } catch {
-      setError("Network error");
+    } catch (publishError) {
+      setError(publishError instanceof Error ? publishError.message : "Network error");
     } finally {
       setBusy(false);
     }
@@ -308,7 +279,7 @@ export default function Page() {
     window.location.href = "/sign-in";
   };
 
-  const armed = content.length > 0;
+  const armed = draft !== null;
 
   return (
     <div className={shares.length > 0 ? "has-shares" : undefined}>
@@ -333,7 +304,7 @@ export default function Page() {
       <input
         ref={fileInput}
         type="file"
-        accept=".html,.htm,.md,text/html,text/markdown"
+        accept=".html,.htm,.md,.zip,text/html,text/markdown,application/zip"
         hidden
         onChange={(e) => {
           const f = e.target.files?.[0];
@@ -376,7 +347,7 @@ export default function Page() {
               CANVAS
             </h1>
             <div className="hint">
-              <span className="key">drop .html/.md</span>
+              <span className="key">drop .html/.md/.zip</span>
               <span className="sep">/</span>
               <span className="key">⌘V</span>
               <span className="sep">/</span>
@@ -391,10 +362,10 @@ export default function Page() {
                     placeholder="<!DOCTYPE html>... or # Markdown — paste here"
                     onPaste={(e) => {
                       const text = e.clipboardData.getData("text");
-                      const pastedKind = detectArtifactKind(text);
-                      if (!validateArtifact(text, pastedKind)) {
+                      const pastedKind = detectTextArtifactKind(text);
+                      if (!validateTextArtifact(text, pastedKind)) {
                         e.preventDefault();
-                        accept(text, "pasted", pastedKind);
+                        acceptText(text, "pasted");
                       }
                     }}
                   />
@@ -414,11 +385,11 @@ export default function Page() {
           <div className="panel">
             <div className="meta">
               <span>
-                {source} · {kind}
+                {draft.source} · {draft.kind}
               </span>
               <span>
-                {formatBytes(byteLength)}{" "}
-                <span className={artifactOk ? "ok" : "bad"}>{statusLabel}</span>
+                {formatBytes(draftCheck.bytes)}{" "}
+                <span className={draftCheck.ok ? "ok" : "bad"}>{draftCheck.label}</span>
               </span>
             </div>
 
@@ -435,7 +406,7 @@ export default function Page() {
             <div className="actions">
               <button
                 className="publish"
-                disabled={busy || !artifactOk}
+                disabled={busy || !draftCheck.ok}
                 onClick={publish}
               >
                 {busy ? "publishing…" : replaceSlug.trim() ? "replace" : "publish"}
@@ -443,8 +414,7 @@ export default function Page() {
               <button
                 className="ghost"
                 onClick={() => {
-                  setContent("");
-                  setKind("html");
+                  setDraft(null);
                 }}
               >
                 discard
@@ -470,7 +440,7 @@ export default function Page() {
       <div className="marquee">
         <span className="track">
           {Array.from({ length: 2 }, () =>
-            "paste html or md — get a permanent link — mekari publishers — no drafts — ".repeat(4)
+            "paste html or md or drop a trace — get a share link — mekari publishers — no drafts — ".repeat(4)
           ).join("")}
         </span>
       </div>

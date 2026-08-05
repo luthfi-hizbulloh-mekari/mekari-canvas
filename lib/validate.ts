@@ -1,6 +1,4 @@
-import type { ArtifactKind } from "@/lib/artifact-kind";
-
-export const MAX_ARTIFACT_BYTES = 500 * 1024;
+import { ARTIFACT_KIND, type TextArtifactKind } from "@/lib/artifact-kind";
 
 export function artifactBytes(body: string): number {
   return new TextEncoder().encode(body).byteLength;
@@ -11,9 +9,9 @@ function looksLikeHtml(body: string): boolean {
   return head.includes("<html") || head.includes("<!doctype");
 }
 
-export function validateArtifact(body: string, kind: ArtifactKind): string | null {
-  if (artifactBytes(body) > MAX_ARTIFACT_BYTES) {
-    return "Artifact exceeds 500 KB";
+export function validateTextArtifact(body: string, kind: TextArtifactKind): string | null {
+  if (artifactBytes(body) > ARTIFACT_KIND[kind].maxBytes) {
+    return `Artifact exceeds ${ARTIFACT_KIND[kind].maxBytes / 1024} KB`;
   }
 
   if (kind === "html" && !looksLikeHtml(body)) {
@@ -27,7 +25,7 @@ export function validateArtifact(body: string, kind: ArtifactKind): string | nul
   return null;
 }
 
-export function detectArtifactKind(content: string, filename?: string): ArtifactKind {
+export function detectTextArtifactKind(content: string, filename?: string): TextArtifactKind {
   const lowerName = filename?.toLowerCase() ?? "";
   if (lowerName.endsWith(".html") || lowerName.endsWith(".htm")) {
     return "html";
