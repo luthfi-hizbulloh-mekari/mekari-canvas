@@ -1,116 +1,296 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import {
+  buildSetupPrompt,
+  isSkillSetupUsable,
+  parseSkillSetup,
+  skillSetupRemainingMs,
+  type SkillSetup,
+} from "@/lib/skill-distribution";
 
-type SetupState = {
-  code: string;
-  expiresAt: string;
-  manifestUrl: string;
-  guideUrl: string;
+type AgentId = "cursor" | "claude-code" | "codex";
+type ActionId = AgentId | "copy";
+
+type Agent = {
+  id: AgentId;
+  name: string;
+  mark: string;
+  deepLink?: (prompt: string) => string;
+};
+
+type Feedback = {
+  kind: "status" | "error";
+  message: string;
 };
 
 type Props = {
   signedIn: boolean;
 };
 
-function cursorDeepLink(prompt: string): string {
-  return `cursor://anysphere.cursor-deeplink/prompt?text=${encodeURIComponent(prompt)}`;
-}
+const AGENTS: Agent[] = [
+  {
+    id: "cursor",
+    name: "Cursor",
+    mark: "C",
+    deepLink: (prompt) =>
+      `cursor://anysphere.cursor-deeplink/prompt?text=${encodeURIComponent(prompt)}`,
+  },
+  { id: "claude-code", name: "Claude Code", mark: "Cl" },
+  { id: "codex", name: "Codex CLI", mark: "Cx" },
+];
 
-function buildSetupPrompt(setup: SetupState): string {
-  return [
-    "Set up Mekari Canvas agent publish (/mekari-canvas skill):",
-    "",
-    `1. Fetch manifest: ${setup.manifestUrl}`,
-    `2. Download manifest.files[] to ~/.cursor/skills/mekari-canvas/`,
-    `3. POST ${new URL(setup.manifestUrl).origin}/api/setup/exchange`,
-    `   Body: { "code": "${setup.code}", "label": "Cursor" }`,
-    "4. Save token to ~/.canvas/config.json",
-    "5. Run: ~/.cursor/skills/mekari-canvas/scripts/mekari-canvas.sh list",
-  ].join("\n");
+async function writeClipboard(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Older and permission-restricted browsers may still support execCommand.
+    }
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand("copy");
+  textarea.remove();
+  if (!copied) throw new Error("Clipboard write failed");
 }
 
 export default function AddSkillPanel({ signedIn }: Props) {
   const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [setup, setSetup] = useState<SetupState | null>(null);
+  const [setup, setSetup] = useState<SkillSetup | null>(null);
+  const [pendingAction, setPendingAction] = useState<ActionId | null>(null);
+  const [launchedAgent, setLaunchedAgent] = useState<AgentId | null>(null);
+  const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [copied, setCopied] = useState(false);
+  const actionInProgress = useRef(false);
+  const mintPromise = useRef<Promise<SkillSetup> | null>(null);
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const mint = async () => {
-    setBusy(true);
-    setError("");
-    try {
-      const res = await fetch("/api/setup/code", { method: "POST" });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || "Could not mint setup code");
-        return;
+  const prompt = setup ? buildSetupPrompt(setup) : null;
+  const busy = pendingAction !== null;
+
+  const getSetup = async (): Promise<SkillSetup> => {
+    if (setup && isSkillSetupUsable(setup)) return setup;
+    if (mintPromise.current) return mintPromise.current;
+
+    const request = (async () => {
+      const response = await fetch("/api/setup/code", { method: "POST" });
+      const data: unknown = await response.json().catch(() => null);
+      if (!response.ok) {
+        const message =
+          typeof data === "object" &&
+          data !== null &&
+          "error" in data &&
+          typeof data.error === "string"
+            ? data.error
+            : "Could not create a Setup code";
+        throw new Error(message);
       }
-      const next: SetupState = {
-        code: data.code,
-        expiresAt: data.expiresAt,
-        manifestUrl: data.manifestUrl,
-        guideUrl: data.guideUrl,
-      };
-      setSetup(next);
-      setOpen(true);
 
-      const prompt = buildSetupPrompt(next);
-      const link = cursorDeepLink(prompt);
-      window.location.href = link;
-    } catch {
-      setError("Network error");
+      const next = parseSkillSetup(data);
+      if (!isSkillSetupUsable(next)) throw new Error("Setup code expired before use");
+      setSetup(next);
+      return next;
+    })();
+    mintPromise.current = request;
+
+    try {
+      return await request;
     } finally {
-      setBusy(false);
+      if (mintPromise.current === request) mintPromise.current = null;
     }
   };
 
-  const copyBlock = () => {
-    if (!setup) return;
-    const text = [
-      buildSetupPrompt(setup),
-      "",
-      `Guide: ${setup.guideUrl}`,
-    ].join("\n");
-    navigator.clipboard.writeText(text);
+  const beginAction = (action: ActionId): boolean => {
+    if (actionInProgress.current || (action !== "copy" && launchedAgent)) return false;
+    actionInProgress.current = true;
+    setPendingAction(action);
+    setFeedback(null);
+    return true;
+  };
+
+  const finishAction = () => {
+    actionInProgress.current = false;
+    setPendingAction(null);
+  };
+
+  const flagCopied = () => {
     setCopied(true);
-    setTimeout(() => setCopied(false), 1200);
+    if (copyTimer.current) clearTimeout(copyTimer.current);
+    copyTimer.current = setTimeout(() => setCopied(false), 1600);
+  };
+
+  const copyText = async (text: string, successMessage: string): Promise<void> => {
+    try {
+      await writeClipboard(text);
+      flagCopied();
+      setFeedback({ kind: "status", message: successMessage });
+    } catch {
+      setFeedback({
+        kind: "error",
+        message: "Could not copy the prompt. Select the raw prompt and copy it manually.",
+      });
+    }
+  };
+
+  useEffect(
+    () => () => {
+      if (copyTimer.current) clearTimeout(copyTimer.current);
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (!setup) return;
+    const delay = skillSetupRemainingMs(setup);
+    if (delay <= 0) {
+      setSetup(null);
+      return;
+    }
+    const timer = setTimeout(() => setSetup(null), delay);
+    return () => clearTimeout(timer);
+  }, [setup]);
+
+  const copyPrompt = async () => {
+    if (!beginAction("copy")) return;
+    try {
+      const next = await getSetup();
+      await copyText(buildSetupPrompt(next), "Setup prompt copied.");
+    } catch (error) {
+      setFeedback({
+        kind: "error",
+        message: error instanceof Error ? error.message : "Network error",
+      });
+    } finally {
+      finishAction();
+    }
+  };
+
+  const launch = async (agent: Agent) => {
+    if (!beginAction(agent.id)) return;
+    try {
+      const next = await getSetup();
+      const nextPrompt = buildSetupPrompt(next);
+      setLaunchedAgent(agent.id);
+
+      if (agent.deepLink) {
+        setFeedback({
+          kind: "status",
+          message: `${agent.name} deep link attempted. If it did not open, copy the raw prompt below.`,
+        });
+        window.location.href = agent.deepLink(nextPrompt);
+      } else {
+        await copyText(nextPrompt, `Prompt copied. Paste it into ${agent.name}.`);
+      }
+    } catch (error) {
+      setFeedback({
+        kind: "error",
+        message: error instanceof Error ? error.message : "Network error",
+      });
+    } finally {
+      finishAction();
+    }
+  };
+
+  const startOver = () => {
+    setSetup(null);
+    setLaunchedAgent(null);
+    setFeedback(null);
+    setCopied(false);
+    mintPromise.current = null;
+    if (copyTimer.current) clearTimeout(copyTimer.current);
   };
 
   if (!signedIn) return null;
 
   return (
     <div className="agent-setup">
-      <button className="ghost add-skill" disabled={busy} onClick={mint}>
-        {busy ? "minting…" : "add skill"}
+      <button
+        className="ghost add-skill"
+        aria-expanded={open}
+        aria-controls="add-skill-panel"
+        onClick={() => setOpen((current) => !current)}
+      >
+        add skill
       </button>
 
-      {open && setup && (
-        <div className="setup-panel panel">
+      {open && (
+        <section
+          id="add-skill-panel"
+          className="setup-panel panel"
+          aria-labelledby="add-skill-title"
+          aria-busy={busy}
+        >
           <div className="setup-header">
-            <span className="label">agent setup</span>
+            <span id="add-skill-title" className="label">
+              add mekari canvas skill
+            </span>
             <button className="ghost" onClick={() => setOpen(false)}>
               close
             </button>
           </div>
-          <p className="setup-hint">
-            Setup code expires {new Date(setup.expiresAt).toLocaleTimeString()}. If Cursor
-            did not open, copy the block below into your agent.
-          </p>
-          <pre className="setup-block">{buildSetupPrompt(setup)}</pre>
-          <div className="setup-actions">
-            <button className="ghost" onClick={copyBlock}>
-              {copied ? "copied" : "copy setup block"}
-            </button>
-            <a className="ghost" href={setup.guideUrl} target="_blank" rel="noreferrer">
-              guide
-            </a>
-          </div>
-        </div>
-      )}
 
-      {error && <div className="error setup-error">{error}</div>}
+          <div className="setup-grid" aria-label="Choose where to open the setup prompt">
+            {AGENTS.map((agent) => (
+              <button
+                key={agent.id}
+                className={`setup-tile${launchedAgent === agent.id ? " active" : ""}`}
+                disabled={busy || launchedAgent !== null}
+                aria-label={`${agent.deepLink ? "Open setup prompt in" : "Copy setup prompt for"} ${agent.name}`}
+                onClick={() => launch(agent)}
+              >
+                <span className="setup-mark" aria-hidden="true">
+                  {agent.mark}
+                </span>
+                <span>{pendingAction === agent.id ? "Preparing…" : agent.name}</span>
+              </button>
+            ))}
+          </div>
+
+          <div className="setup-alternative">
+            <span>or</span>
+            <button className="setup-copy" disabled={busy} onClick={copyPrompt}>
+              {pendingAction === "copy" ? "preparing…" : copied ? "copied ✓" : "copy prompt"}
+            </button>
+          </div>
+
+          <span className="setup-announcer" aria-live="polite" aria-atomic="true">
+            {feedback?.message}
+          </span>
+
+          {feedback && (
+            <div className={`setup-result${feedback.kind === "error" ? " error" : ""}`}>
+              <span className="setup-result-dot" />
+              {feedback.message}
+            </div>
+          )}
+
+          {setup && prompt && (
+            <div className="setup-prompt">
+              <div className="setup-prompt-header">
+                <span>raw prompt</span>
+                <span>expires {new Date(setup.expiresAt).toLocaleTimeString()}</span>
+              </div>
+              <pre className="setup-prompt-body">{prompt}</pre>
+            </div>
+          )}
+
+          {launchedAgent && (
+            <div className="setup-footer">
+              <button className="ghost" onClick={startOver}>
+                start over
+              </button>
+            </div>
+          )}
+        </section>
+      )}
     </div>
   );
 }

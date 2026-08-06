@@ -4,9 +4,16 @@ set -euo pipefail
 
 CONFIG="${HOME}/.canvas/config.json"
 MANIFEST_FILE="${HOME}/.canvas/publish-manifest.json"
-SKILL_DIR="${HOME}/.cursor/skills/mekari-canvas"
+DEFAULT_MANIFEST_URL="https://mekari-canvas.vercel.app/setup/manifest.json"
+TOKEN_VALID=0
+TOKEN_REJECTED=1
+TOKEN_INCONCLUSIVE=2
 
 die() { echo "mekari-canvas: $*" >&2; exit 1; }
+
+is_api_base() {
+  [[ "$1" =~ ^https?://[^/?#[:space:]]+$ ]]
+}
 
 require_jq() {
   command -v jq >/dev/null 2>&1 || die "jq is required"
@@ -103,46 +110,150 @@ remove_manifest_slug() {
   mv "$tmp" "$MANIFEST_FILE"
 }
 
+write_config() {
+  local api_base="$1" token="$2" config_dir tmp
+  config_dir=$(dirname "$CONFIG")
+  mkdir -p "$config_dir"
+  tmp=$(mktemp "$config_dir/.config.json.XXXXXX")
+
+  if [[ -f "$CONFIG" ]]; then
+    if ! jq --arg apiBase "$api_base" --arg token "$token" \
+      '. + {apiBase: $apiBase, token: $token}' "$CONFIG" > "$tmp"; then
+      rm -f "$tmp"
+      die "could not update config at $CONFIG"
+    fi
+  else
+    if ! jq -n --arg apiBase "$api_base" --arg token "$token" \
+      '{apiBase: $apiBase, token: $token}' > "$tmp"; then
+      rm -f "$tmp"
+      die "could not create config at $CONFIG"
+    fi
+  fi
+
+  if ! chmod 600 "$tmp" || ! mv "$tmp" "$CONFIG"; then
+    rm -f "$tmp"
+    die "could not secure config at $CONFIG"
+  fi
+}
+
+validate_saved_token() {
+  local api_base="$1" token="$2" status
+
+  status=$(curl -sS --connect-timeout 10 --max-time 30 \
+    -o /dev/null -w '%{http_code}' \
+    -H "Authorization: Bearer $token" \
+    "$api_base/api/shares") || return "$TOKEN_INCONCLUSIVE"
+  if [[ "$status" -ge 200 && "$status" -lt 300 ]]; then
+    return "$TOKEN_VALID"
+  fi
+  if [[ "$status" == 401 || "$status" == 403 ]]; then
+    return "$TOKEN_REJECTED"
+  fi
+  return "$TOKEN_INCONCLUSIVE"
+}
+
 cmd_setup() {
   local code="${1:-}" manifest_url="${2:-}"
   [[ -n "$code" ]] || die "usage: mekari-canvas setup <code> [manifest-url]"
   require_jq
 
   if [[ -z "$manifest_url" ]]; then
-    manifest_url="https://mekari-canvas.vercel.app/setup/manifest.json"
+    manifest_url="$DEFAULT_MANIFEST_URL"
+  fi
+  [[ "$manifest_url" =~ ^https?://[^/?#[:space:]]+([/?#].*)?$ ]] \
+    || die "invalid setup manifest URL"
+
+  local existing_api_base="" existing_token=""
+  if [[ -f "$CONFIG" ]]; then
+    jq -e 'type == "object"' "$CONFIG" >/dev/null 2>&1 \
+      || die "invalid JSON config at $CONFIG"
+    existing_api_base=$(jq -r \
+      'if (.apiBase | type) == "string" then .apiBase else empty end' "$CONFIG")
+    existing_token=$(jq -r \
+      'if (.token | type) == "string" then .token else empty end' "$CONFIG")
+  fi
+
+  if [[ -n "$existing_api_base" && -n "$existing_token" ]]; then
+    existing_api_base=${existing_api_base%/}
+    if ! is_api_base "$existing_api_base"; then
+      echo "Existing Publisher API config has an invalid API base; exchanging the new Setup code." >&2
+      existing_api_base=""
+    fi
+  fi
+
+  if [[ -n "$existing_api_base" && -n "$existing_token" ]]; then
+    local validation_result
+    validate_saved_token "$existing_api_base" "$existing_token" \
+      && validation_result=$TOKEN_VALID \
+      || validation_result=$?
+    case "$validation_result" in
+      "$TOKEN_VALID")
+        chmod 600 "$CONFIG"
+        echo "Setup complete. Existing Publisher API token is valid and was preserved."
+        return 0
+        ;;
+      "$TOKEN_REJECTED")
+        echo "Existing Publisher API token was rejected; exchanging the new Setup code." >&2
+        ;;
+      "$TOKEN_INCONCLUSIVE")
+        chmod 600 "$CONFIG"
+        echo "Could not validate the existing Publisher API token; it was preserved and the Setup code was not exchanged." >&2
+        return 0
+        ;;
+      *)
+        die "unexpected token validation result: $validation_result"
+        ;;
+    esac
   fi
 
   local manifest api_base exchange_url
-  manifest=$(curl -sf "$manifest_url")
-  api_base=$(echo "$manifest" | jq -r '.apiBase')
-  exchange_url=$(echo "$manifest" | jq -r '.exchangeUrl')
+  manifest=$(curl -fsS --connect-timeout 10 --max-time 30 "$manifest_url") \
+    || die "could not fetch setup manifest"
+  api_base=$(jq -er \
+    'select(type == "object") | .apiBase | select(type == "string" and length > 0)' \
+    <<<"$manifest") || die "invalid setup manifest"
+  exchange_url=$(jq -er \
+    'select(type == "object") | .exchangeUrl | select(type == "string" and length > 0)' \
+    <<<"$manifest") || die "invalid setup manifest"
+  api_base=${api_base%/}
+  is_api_base "$api_base" || die "invalid API base in setup manifest"
+  [[ "$exchange_url" == /* && "$exchange_url" != //* ]] \
+    || die "invalid exchange URL in setup manifest"
 
-  local resp token
-  resp=$(curl -sf -X POST \
+  local payload response_with_status status response token response_api_base
+  payload=$(jq -n --arg code "$code" \
+    '{code: $code, label: "Mekari Canvas (shared)"}')
+  response_with_status=$(curl -sS --connect-timeout 10 --max-time 30 \
+    -w $'\n%{http_code}' -X POST \
     -H "Content-Type: application/json" \
-    -d "{\"code\": \"$code\", \"label\": \"CLI\"}" \
-    "$api_base$exchange_url")
-  token=$(echo "$resp" | jq -r '.token')
-  api_base=$(echo "$resp" | jq -r '.apiBase // empty')
-  [[ -z "$api_base" || "$api_base" == "null" ]] && api_base=$(echo "$manifest" | jq -r '.apiBase')
+    -d "$payload" \
+    "$api_base$exchange_url") || die "could not reach setup exchange"
+  status=${response_with_status##*$'\n'}
+  response=${response_with_status%$'\n'*}
 
-  mkdir -p "$(dirname "$CONFIG")" "$SKILL_DIR"
+  if [[ "$status" -lt 200 || "$status" -ge 300 ]]; then
+    local message
+    message=$(jq -r \
+      'if type == "object" and (.error | type) == "string" and (.error | length) > 0
+       then .error else "setup exchange failed" end' \
+      <<<"$response" 2>/dev/null) || message="setup exchange failed"
+    die "$message (HTTP $status)"
+  fi
 
-  echo "$manifest" | jq -c '.files[]' | while read -r entry; do
-    rel=$(echo "$entry" | jq -r '.path')
-    url=$(echo "$entry" | jq -r '.url')
-    dest="$SKILL_DIR/$rel"
-    mkdir -p "$(dirname "$dest")"
-    curl -sf "${api_base}${url}" -o "$dest"
-    if [[ "$rel" == scripts/* ]]; then
-      chmod +x "$dest"
-    fi
-  done
+  token=$(jq -r \
+    'if type == "object" and (.token | type) == "string" then .token else empty end' \
+    <<<"$response") || die "invalid setup exchange response"
+  response_api_base=$(jq -r \
+    'if type == "object" and (.apiBase | type) == "string" then .apiBase else empty end' \
+    <<<"$response") || die "invalid setup exchange response"
+  [[ -n "$token" ]] || die "invalid setup exchange response"
+  if [[ -n "$response_api_base" ]]; then
+    api_base=${response_api_base%/}
+    is_api_base "$api_base" || die "invalid API base in setup exchange response"
+  fi
 
-  mkdir -p "$(dirname "$CONFIG")"
-  jq -n --arg apiBase "$api_base" --arg token "$token" '{apiBase: $apiBase, token: $token}' > "$CONFIG"
-  chmod 600 "$CONFIG"
-  echo "Setup complete. Token saved to $CONFIG"
+  write_config "$api_base" "$token"
+  echo "Setup complete. Shared Publisher API token saved to $CONFIG"
 }
 
 cmd_publish() {
@@ -234,7 +345,7 @@ usage() {
   cat <<EOF
 mekari-canvas — Mekari Canvas Agent publish
 
-  setup <code> [manifest-url]   One-time setup (exchange code, install skill)
+  setup <code> [manifest-url]   Reuse or exchange the shared Publisher API token
   publish [--new] [--replace S] <file>   Publish or replace Share
   list                          List your Shares
   delete <slug>                 Delete a Share

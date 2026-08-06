@@ -81,36 +81,52 @@ Legacy per-Share secret stored in the publisher's browser (`localStorage`) at cr
 _Avoid_: Edit token, cookie, session
 
 **Publisher API token**:
-Long-lived secret tied to one **Publisher** (`@mekari.com` email). Sent as `Authorization: Bearer` for **Agent publish** — create, Replace, Delete, and list Shares without browser paste/upload. One token minted per **Add skill** setup (per machine/harness); revocable individually on the homepage.
+Long-lived secret tied to one **Publisher** (`@mekari.com` email). Sent as `Authorization: Bearer` for **Agent publish** — create, Replace, Delete, and list Shares without browser paste/upload. One token is stored per global machine setup and shared by its supported **Agent surfaces**; a valid token is reused, while missing or rejected credentials are replaced. Revocable from the homepage.
 _Avoid_: API key, PAT, access token
 
 **Setup code**:
-One-time, short-lived code minted when a **Publisher** clicks **Add skill** on the homepage. A harness agent exchanges it for a **Publisher API token** and the **Setup bundle** during local setup — the token never appears in chat or copy-paste UI.
+One-time, short-lived code minted after a **Publisher** opens **Add skill** on the homepage and chooses a launch **Agent surface**. The selected surface exchanges it for a **Publisher API token** and Canvas setup metadata during local setup — the token never appears in chat or copy-paste UI.
 _Avoid_: Auth code, pairing code, OAuth code
 
 **Setup bundle**:
-Canonical skill files and config the agent writes locally at setup — returned from the setup exchange and/or fetched via the **Setup manifest**. Includes `SKILL.md`, optional scripts, and API base URL. Same bundle for every harness; Cursor is the first consumer.
+Canvas-specific setup inputs for connecting an installed **Skill package** to **Agent publish** — the one-time **Setup code**, API base URL, and exchange/manifest metadata. It does not contain the **Publisher API token** and is not the Skill package itself.
 _Avoid_: Skill pack, installer, plugin
 
+**Skill package**:
+The public, versioned set of `SKILL.md` and supporting files published in the Mekari Canvas GitHub repository. It is the canonical source installed or refreshed globally through the standard **Skills CLI** for the current supported **Agent surfaces**: Cursor, Claude Code, and Codex CLI.
+_Avoid_: Setup bundle, integration, harness files
+
 **Setup manifest**:
-Public thin JSON hosted on the Canvas site (`/setup/manifest.json`) listing API base URL, exchange endpoint, and URLs for each **Setup bundle** file (e.g. `SKILL.md`, scripts). Companion MD (`/setup/guide.md`) gives human-readable steps. The **Add skill** page renders a copy-paste prompt block (manifest URL + **Setup code**) when the deep link cannot open the harness.
+Public thin JSON hosted on the Canvas site (`/setup/manifest.json`) listing only the API base URL and exchange endpoint. Companion MD (`/setup/guide.md`) gives human-readable steps. The **Add skill** page renders a copy-paste prompt block (**Skills CLI** package source + **Setup code**) when the selected **Agent surface** has no supported deep link or the launch fails.
 _Avoid_: Config file, README, integration doc
+
+**Skill refresh**:
+Re-running the setup prompt for an existing installation — refreshes the current **Skill package** while preserving a valid shared **Publisher API token**. A missing or rejected token may be replaced using the new **Setup code**.
+_Avoid_: Reconnect, reauthorize, duplicate installation
 
 **Agent publish**:
 Creating or mutating any supported Share Artifact via the **Agent API** using a **Publisher API token**, instead of the signed-in homepage paste/upload flow. Playwright Trace Artifacts are uploaded as binary payloads through this path.
 _Avoid_: MCP publish, CLI upload, programmatic upload
 
 **Agent API**:
-Harness-agnostic HTTP endpoints for Share create, Replace, Delete, and list — authenticated by **Publisher API token**. Same storage and Short links as browser publish; HTML/Markdown use text payloads and Playwright Trace Artifacts use binary file uploads. First consumer is the **`/mekari-canvas`** Cursor skill.
+Harness-agnostic HTTP endpoints for Share create, Replace, Delete, and list — authenticated by **Publisher API token**. Same storage and Short links as browser publish; HTML/Markdown use text payloads and Playwright Trace Artifacts use binary file uploads. Consumers are the **`/mekari-canvas`** Skill package on Cursor, Claude Code, and Codex CLI.
 _Avoid_: MCP server, SDK, integration
 
 **Add skill**:
-Homepage action for a signed-in **Publisher** — mints a **Setup code** and opens the user's harness (Cursor first) so an agent can complete one-time local setup and enable **Agent publish**.
+Homepage action for a signed-in **Publisher** — opens a chooser, then mints one **Setup code** for the selected launch **Agent surface**. The resulting prompt installs the **Skill package** globally for Cursor, Claude Code, and Codex CLI and enables **Agent publish**.
 _Avoid_: Connect, install, link account
 
+**Agent surface**:
+A local coding-agent client that can receive the Add skill setup prompt and use the globally installed **Skill package**. The supported surfaces are Cursor, Claude Code, and Codex CLI; choosing one selects only where the prompt opens, not the installation scope.
+_Avoid_: Harness, AI app, integration
+
 **Mekari Canvas skill**:
-The harness entry point for **Agent publish** — invoked as **`/mekari-canvas`**. Supports explicit subcommands (`publish`, `list`, `delete`, `replace`, `setup`) or freeform intent when context is clear (e.g. attached handoff file or Playwright trace ZIP). Installed user-wide so it works from any repo.
+The installed **Skill package** entry point for **Agent publish** — invoked as **`/mekari-canvas`**. Supports explicit subcommands (`publish`, `list`, `delete`, `replace`, `setup`) or freeform intent when context is clear (e.g. attached handoff file or Playwright trace ZIP). Installed globally through the **Skills CLI** so it works from any repo.
 _Avoid_: Canvas skill, publish skill, MCP tool
+
+**Skills CLI**:
+The standard `npx skills` package manager for discovering, installing, and updating **Skill packages** across supported **Agent surfaces**. Global installation is user-level and available across repositories.
+_Avoid_: skills.sh registry, harness installer, Canvas installer
 
 ## Relationships
 
@@ -132,10 +148,14 @@ _Avoid_: Canvas skill, publish skill, MCP tool
 - The **Raw trace endpoint** is public and CORS-enabled for Playwright Trace Viewer, while its underlying Blob storage is private
 - The trace redirect is a convenience boundary, not download prevention; link-holders can fetch the **Raw trace endpoint**
 - **Agent publish** Replace and Delete require **Publisher API token** + matching **Published by**
-- **Setup code** exchanges once for one **Publisher API token** per harness setup; revocable from the homepage independently of **Publisher sign-in**
-- Each **Add skill** setup mints a distinct **Publisher API token** for that machine/harness — revoking one does not invalidate others
-- **Add skill** requires **Publisher sign-in**; the resulting token enables **Agent publish** from that harness only after local setup completes
+- **Setup code** exchanges once for the global setup's **Publisher API token** through the selected launch **Agent surface**; revocable from the homepage independently of **Publisher sign-in**
+- **Add skill** requires **Publisher sign-in**; the resulting token enables **Agent publish** from all supported **Agent surfaces** after the global setup completes
 - **Setup manifest** is public; **Setup code** is single-use and minted per click — token only via exchange, never embedded in the manifest
+- **Skill refresh** replaces the managed skill files but leaves the existing **Publisher API token** and unrelated local files untouched
+- A **Skill refresh** checks the shared token before exchanging the new **Setup code**; valid credentials are reused, while missing or rejected credentials are replaced
+- The **Skills CLI** owns **Skill package** installation and refresh; the Mekari Canvas setup command owns only token exchange/reuse and `~/.canvas/config.json`
+- The existing public `mekari-canvas` GitHub repository is the canonical source for the **Skill package**; the **Skills CLI** distributes it globally to Cursor, Claude Code, and Codex CLI, while the selected surface only launches the prompt
+- **Add skill** uses a native deep link when the selected **Agent surface** supports one; otherwise it keeps the setup popup available with the copyable raw prompt fallback
 
 ## Example dialogue
 

@@ -3,7 +3,7 @@ name: mekari-canvas
 description: >-
   Publish and manage Mekari Canvas Shares (HTML, Markdown, or Playwright Trace Artifacts) via the
   Agent API. Use when the user invokes /mekari-canvas, wants to publish a
-  handoff doc, list Shares, replace, or delete. Supports setup on first use.
+  handoff doc, list Shares, replace, or delete. Supports shared Publisher API token setup and reuse.
 ---
 
 # Mekari Canvas
@@ -16,26 +16,29 @@ Agent publish for [Mekari Canvas](https://mekari-canvas.vercel.app) — Short li
 - User wants a Short link for a handoff doc without opening the website
 - User asks to list, replace, or delete their Canvas Shares
 
-## Setup (one-time)
+## Setup and refresh
 
-If `~/.canvas/config.json` is missing:
+Install or refresh this Skill package globally for all supported Agent surfaces with:
 
-1. Ask the user to click **Add skill** on the Canvas homepage and share the **Setup code** (or use the copy-paste block with manifest URL + code).
-2. Fetch the setup manifest from the URL they provide (default: `https://mekari-canvas.vercel.app/setup/manifest.json`).
-3. Download each file in `manifest.files[]` to `~/.cursor/skills/mekari-canvas/` preserving relative paths.
-4. `POST {apiBase}{exchangeUrl}` with `{ "code": "<setup-code>", "label": "Cursor" }`.
-5. Write `~/.canvas/config.json`: `{ "apiBase": "<from response>", "token": "<from response>" }` (mode 600).
-6. Confirm with `~/.cursor/skills/mekari-canvas/scripts/mekari-canvas.sh list`.
+```bash
+npx skills add https://github.com/luthfi-hizbulloh-mekari/mekari-canvas --skill mekari-canvas --global --agent cursor --agent claude-code --agent codex --yes
+```
 
-Or run: `~/.cursor/skills/mekari-canvas/scripts/mekari-canvas.sh setup <code> [manifest-url]`
+Then, from this installed Skill directory, run `bash scripts/mekari-canvas.sh setup <code>`. Do not assume an Agent-specific install path or a `mekari-canvas` executable on `PATH`.
+
+The setup command validates a token already stored in `~/.canvas/config.json`. Preserve a valid token. Exchange the new Setup code only when credentials are missing or the API rejects the token. If validation fails because of DNS, timeout, or another transport problem, preserve the token and report that it could not be validated. Preserve unrelated config fields and keep the config mode at 600.
+
+Do not download, copy, or overwrite Skill package files during token setup. The Skills CLI exclusively owns managed Skill installation and refresh for Cursor, Claude Code, and Codex CLI.
 
 ## Subcommands
 
 Prefer the bundled script when shell is available:
 
 ```bash
-~/.cursor/skills/mekari-canvas/scripts/mekari-canvas.sh <command> [args]
+bash scripts/mekari-canvas.sh <command> [args]
 ```
+
+Resolve the path relative to this installed Skill directory.
 
 | Intent | Command |
 |--------|---------|
@@ -44,7 +47,7 @@ Prefer the bundled script when shell is available:
 | Replace specific slug | `replace <absolute-path> <slug>` or `publish --replace <slug> <path>` |
 | List Shares | `list` |
 | Delete Share | `delete <slug>` |
-| Re-run setup | `setup <code>` |
+| Validate/re-run shared token setup | `setup <code>` |
 
 ## HTTP API (if scripting manually)
 

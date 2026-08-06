@@ -1,29 +1,30 @@
-# Mekari Canvas — Agent setup
+# Mekari Canvas — global Agent setup
 
-One-time setup connects your harness to **Agent publish** on Mekari Canvas.
+Install or refresh one Skill package globally for Cursor, Claude Code, and Codex CLI, then connect all three to **Agent publish** with one shared Publisher API token.
 
 ## What you need
 
-1. **Setup manifest URL** — thin JSON listing API base and skill file URLs
-2. **Setup code** — one-time code from the Canvas homepage **Add skill** button (expires in ~10 minutes)
+1. **Skills CLI** through `npx`
+2. **Setup code** — one-time code created after choosing a destination from the Canvas homepage **Add skill** action (expires in ~10 minutes)
 
-The setup code is **never** embedded in the manifest. Exchange it once for a long-lived **Publisher API token**.
+The selected destination only controls where the prompt opens. Installation scope is always global for exactly Cursor, Claude Code, and Codex CLI.
 
-## Copy-paste prompt (Cursor or any agent)
+## Setup prompt
 
+```text
+Install or refresh the Mekari Canvas skill globally for Cursor, Claude Code and Codex CLI.
+
+1. Install/refresh the skill package (Skills CLI owns this):
+   npx skills add https://github.com/luthfi-hizbulloh-mekari/mekari-canvas --skill mekari-canvas --global --agent cursor --agent claude-code --agent codex --yes
+
+2. Exchange or reuse the shared Publisher API token in ~/.canvas/config.json:
+   cd <installed-mekari-canvas-skill-directory>
+   bash scripts/mekari-canvas.sh setup '{SETUP_CODE}'
 ```
-Set up Mekari Canvas agent publish:
 
-1. Fetch the setup manifest: {MANIFEST_URL}
-2. Download each file listed in manifest.files[] to ~/.cursor/skills/mekari-canvas/ (preserve paths)
-3. POST to {API_BASE}/api/setup/exchange with JSON body: { "code": "{SETUP_CODE}", "label": "Cursor" }
-4. Save the returned token to ~/.canvas/config.json as { "apiBase": "<apiBase>", "token": "<token>" }
-5. Confirm: run ~/.cursor/skills/mekari-canvas/scripts/mekari-canvas.sh list
+Replace `{SETUP_CODE}` with the value from the homepage. The Skills CLI prints the installed Skill directory. Run the helper from that directory; Skills CLI does not add a `mekari-canvas` executable to `PATH`.
 
-After setup, invoke /mekari-canvas publish on a .md, .html, or Playwright trace .zip to get a Short link.
-```
-
-Replace `{MANIFEST_URL}`, `{API_BASE}`, and `{SETUP_CODE}` with values from the homepage.
+Token setup does not install or overwrite Skill files. It preserves a valid token, exchanges the new code only when credentials are missing or rejected, and preserves the existing token when network failure makes validation inconclusive. Updates to `apiBase` and `token` preserve unrelated fields in `~/.canvas/config.json`; its mode remains 600.
 
 ## After setup
 
@@ -42,6 +43,6 @@ Replace `{MANIFEST_URL}`, `{API_BASE}`, and `{SETUP_CODE}` with values from the 
 
 Playwright traces are sent as raw ZIP bytes through a once-only, immutable direct upload URL and expire 30 days after first publish. A failed commit retry mints a fresh upload URL. Replacing a trace preserves the original expiration; if an expired Share has already been swept, the helper creates a new Share and updates the manifest.
 
-## Re-install
+## Refresh
 
-Click **Add skill** again on the homepage to refresh skill files after API changes. Each setup mints a new token (revoke old ones on the site if unused).
+Choose **Add skill** again to run the same global Skills CLI command. Managed Skill files refresh across all three Agent surfaces. Unrelated files and a valid shared token remain untouched.
