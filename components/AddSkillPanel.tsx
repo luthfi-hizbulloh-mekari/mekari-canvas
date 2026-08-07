@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ComponentType } from "react";
+import { ClaudeMark, CodexMark, CursorMark } from "@/components/AgentMarks";
 import {
   buildSetupPrompt,
   isSkillSetupUsable,
@@ -10,12 +11,12 @@ import {
 } from "@/lib/skill-distribution";
 
 type AgentId = "cursor" | "claude-code" | "codex";
-type ActionId = AgentId | "copy";
+type ActionId = AgentId | "copy" | "reveal";
 
 type Agent = {
   id: AgentId;
   name: string;
-  mark: string;
+  Mark: ComponentType<{ size?: number }>;
   deepLink?: (prompt: string) => string;
 };
 
@@ -32,12 +33,12 @@ const AGENTS: Agent[] = [
   {
     id: "cursor",
     name: "Cursor",
-    mark: "C",
+    Mark: CursorMark,
     deepLink: (prompt) =>
       `cursor://anysphere.cursor-deeplink/prompt?text=${encodeURIComponent(prompt)}`,
   },
-  { id: "claude-code", name: "Claude Code", mark: "Cl" },
-  { id: "codex", name: "Codex CLI", mark: "Cx" },
+  { id: "claude-code", name: "Claude Code", Mark: ClaudeMark },
+  { id: "codex", name: "Codex CLI", Mark: CodexMark },
 ];
 
 async function writeClipboard(text: string): Promise<void> {
@@ -69,6 +70,7 @@ export default function AddSkillPanel({ signedIn }: Props) {
   const [launchedAgent, setLaunchedAgent] = useState<AgentId | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [copied, setCopied] = useState(false);
+  const [rawOpen, setRawOpen] = useState(false);
   const actionInProgress = useRef(false);
   const mintPromise = useRef<Promise<SkillSetup> | null>(null);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -199,11 +201,31 @@ export default function AddSkillPanel({ signedIn }: Props) {
     }
   };
 
+  const revealPrompt = async () => {
+    if (rawOpen) {
+      setRawOpen(false);
+      return;
+    }
+    if (!beginAction("reveal")) return;
+    try {
+      await getSetup();
+      setRawOpen(true);
+    } catch (error) {
+      setFeedback({
+        kind: "error",
+        message: error instanceof Error ? error.message : "Network error",
+      });
+    } finally {
+      finishAction();
+    }
+  };
+
   const startOver = () => {
     setSetup(null);
     setLaunchedAgent(null);
     setFeedback(null);
     setCopied(false);
+    setRawOpen(false);
     mintPromise.current = null;
     if (copyTimer.current) clearTimeout(copyTimer.current);
   };
@@ -218,7 +240,7 @@ export default function AddSkillPanel({ signedIn }: Props) {
         aria-controls="add-skill-panel"
         onClick={() => setOpen((current) => !current)}
       >
-        add skill
+        install skill
       </button>
 
       {open && (
@@ -229,11 +251,16 @@ export default function AddSkillPanel({ signedIn }: Props) {
           aria-busy={busy}
         >
           <div className="setup-header">
-            <span id="add-skill-title" className="label">
-              add mekari canvas skill
+            <span className="setup-heading">
+              <span id="add-skill-title" className="setup-title">
+                install skill
+              </span>
+              <span className="setup-subtitle">
+                pick an agent — we mint a one-time setup prompt
+              </span>
             </span>
-            <button className="ghost" onClick={() => setOpen(false)}>
-              close
+            <button className="setup-close" aria-label="Close" onClick={() => setOpen(false)}>
+              ×
             </button>
           </div>
 
@@ -246,15 +273,25 @@ export default function AddSkillPanel({ signedIn }: Props) {
                 aria-label={`${agent.deepLink ? "Open setup prompt in" : "Copy setup prompt for"} ${agent.name}`}
                 onClick={() => launch(agent)}
               >
-                <span className="setup-mark" aria-hidden="true">
-                  {agent.mark}
+                <span className="setup-mark">
+                  <agent.Mark size={22} />
                 </span>
-                <span>{pendingAction === agent.id ? "Preparing…" : agent.name}</span>
+                <span className="setup-tile-name">{agent.name}</span>
+                <span className="setup-tile-hint">
+                  {pendingAction === agent.id
+                    ? "preparing…"
+                    : launchedAgent === agent.id
+                      ? "launched"
+                      : agent.deepLink
+                        ? "deep link"
+                        : "copy prompt"}
+                </span>
               </button>
             ))}
           </div>
 
           <div className="setup-alternative">
+            <span className="setup-rule" />
             <span>or</span>
             <button className="setup-copy" disabled={busy} onClick={copyPrompt}>
               {pendingAction === "copy" ? "preparing…" : copied ? "copied ✓" : "copy prompt"}
@@ -272,15 +309,37 @@ export default function AddSkillPanel({ signedIn }: Props) {
             </div>
           )}
 
-          {setup && prompt && (
-            <div className="setup-prompt">
-              <div className="setup-prompt-header">
-                <span>raw prompt</span>
+          <div className="setup-prompt">
+            <div className="setup-prompt-header">
+              <button
+                className="setup-prompt-toggle"
+                aria-expanded={rawOpen}
+                aria-controls="setup-raw-prompt"
+                disabled={busy}
+                onClick={revealPrompt}
+              >
+                <span className={`setup-caret${rawOpen ? " open" : ""}`} aria-hidden="true">
+                  ▸
+                </span>
+                raw prompt
+              </button>
+              {setup && (
                 <span>expires {new Date(setup.expiresAt).toLocaleTimeString()}</span>
-              </div>
-              <pre className="setup-prompt-body">{prompt}</pre>
+              )}
             </div>
-          )}
+
+            {rawOpen && prompt && (
+              <textarea
+                id="setup-raw-prompt"
+                className="setup-prompt-body"
+                readOnly
+                rows={7}
+                spellCheck={false}
+                value={prompt}
+                onFocus={(event) => event.currentTarget.select()}
+              />
+            )}
+          </div>
 
           {launchedAgent && (
             <div className="setup-footer">
