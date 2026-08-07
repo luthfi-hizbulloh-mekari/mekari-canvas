@@ -1,13 +1,9 @@
 import { betterAuth } from "better-auth";
 import { APIError } from "better-auth/api";
 import { nextCookies } from "better-auth/next-js";
+import { isMekariEmail } from "@/lib/mekari-email";
 
-const MEKARI_SUFFIX = "@mekari.com";
 const THIRTY_DAYS = 60 * 60 * 24 * 30;
-
-export function isMekariEmail(email: string | undefined | null): boolean {
-  return !!email && email.toLowerCase().endsWith(MEKARI_SUFFIX);
-}
 
 function authSecret(): string {
   const secret = process.env.BETTER_AUTH_SECRET;

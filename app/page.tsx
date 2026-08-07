@@ -98,6 +98,38 @@ function CursorGlow() {
   return <div ref={ref} className="glow" />;
 }
 
+type Publisher = {
+  email: string;
+  viaDevBypass: boolean;
+};
+
+type PublisherIdentity = "loading" | Publisher | "anonymous";
+
+function usePublisherIdentity(): PublisherIdentity {
+  const [identity, setIdentity] = useState<PublisherIdentity>("loading");
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/me")
+      .then(async (response) => {
+        if (!active) return;
+        if (!response.ok) {
+          setIdentity("anonymous");
+          return;
+        }
+        setIdentity((await response.json()) as Publisher);
+      })
+      .catch(() => {
+        if (active) setIdentity("anonymous");
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  return identity;
+}
+
 export default function Page() {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -111,9 +143,11 @@ export default function Page() {
   const [legacyEditTokens, setLegacyEditTokens] = useState<Record<string, string>>({});
   const [copied, setCopied] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
-  const { data: session } = authClient.useSession();
-  const publisherEmail = session?.user?.email ?? "";
-  const signedIn = Boolean(publisherEmail);
+  const identity = usePublisherIdentity();
+  const publisher = typeof identity === "object" ? identity : null;
+  const publisherEmail = publisher?.email ?? "";
+  const signedIn = publisher !== null;
+  const viaDevBypass = publisher?.viaDevBypass ?? false;
 
   const origin = typeof location !== "undefined" ? location.origin : "";
   const shortLink = publishedSlug ? `${origin}/s/${publishedSlug}` : "";
@@ -122,6 +156,7 @@ export default function Page() {
   const draftCheck = checkDraft(draft);
 
   const loadShares = useCallback(async () => {
+    if (identity === "loading") return;
     if (!signedIn) {
       setShares([]);
       return;
@@ -139,7 +174,7 @@ export default function Page() {
     } catch {
       setSharesError("Network error loading shares");
     }
-  }, [signedIn]);
+  }, [identity, signedIn]);
 
   useEffect(() => {
     setLegacyEditTokens(loadLegacyEditTokens());
@@ -295,9 +330,11 @@ export default function Page() {
         <span className="publisher-bar">
           {publisherEmail && <span className="publisher-email">{publisherEmail}</span>}
           <AddSkillPanel signedIn={signedIn} />
-          <button className="ghost" onClick={signOut}>
-            sign out
-          </button>
+          {signedIn && !viaDevBypass && (
+            <button className="ghost" onClick={signOut}>
+              sign out
+            </button>
+          )}
         </span>
       </header>
 

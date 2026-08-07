@@ -8,7 +8,7 @@ Canvas uses Better Auth with Google OAuth (`hd: mekari.com`) and stateless cooki
 
 **Consequences:** Publish/delete APIs must still verify `@mekari.com` server-side — do not rely on `hd` alone. Homepage requires sign-in before paste/upload. Legacy Shares without **Published by** grandfather Replace/Delete for any `@mekari.com` + valid **Browser edit token**.
 
-**Local development:** Optional env bypass (`DEV_PUBLISHER_EMAIL`) substitutes Google OAuth on local `next dev` only when `NODE_ENV=development` **and** `DEV_AUTH_BYPASS=true` — must never activate on Vercel production.
+**Local development:** Optional env bypass (`DEV_PUBLISHER_EMAIL`) substitutes Google OAuth when `DEV_AUTH_BYPASS=true` and the app is not running on Vercel. The `VERCEL=1` fence prevents it from activating in Vercel production.
 
 **Session:** 30-day stateless cookie TTL.
 

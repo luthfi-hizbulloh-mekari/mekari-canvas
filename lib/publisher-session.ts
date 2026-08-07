@@ -1,20 +1,7 @@
-import { auth, isMekariEmail } from "@/lib/auth";
+import { auth } from "@/lib/auth";
+import { devBypassEmail } from "@/lib/dev-bypass";
+import { isMekariEmail } from "@/lib/mekari-email";
 import { validateBearerToken } from "@/lib/token-store";
-
-function devBypassEmail(): string | null {
-  const bypassEnabled = process.env.DEV_AUTH_BYPASS === "true";
-  const email = process.env.DEV_PUBLISHER_EMAIL?.trim();
-
-  if (process.env.VERCEL === "1") {
-    return null;
-  }
-
-  if (!bypassEnabled || !email || !isMekariEmail(email)) {
-    return null;
-  }
-
-  return email.toLowerCase();
-}
 
 function bearerToken(req: Request): string | null {
   const header = req.headers.get("authorization");
