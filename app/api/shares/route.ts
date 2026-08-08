@@ -21,7 +21,7 @@ export async function GET(req: Request) {
         updatedAt: meta.updatedAt,
         size: meta.size,
         publishedBy: meta.publishedBy,
-        expiresAt: meta.expiresAt,
+        expiresAt: meta.kind === "trace" ? (meta.expiresAt ?? null) : undefined,
         legacy: !meta.publishedBy,
       })),
     });

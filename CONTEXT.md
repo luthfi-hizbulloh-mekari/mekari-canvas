@@ -41,8 +41,12 @@ The non-canonical, public `/s/{slug}/trace` URL for a Playwright Trace Artifact 
 _Avoid_: Download link, ZIP link, asset URL
 
 **Trace expiration**:
-The 30-day retention window for a Playwright Trace Share, measured from its first publish. Replacing an active trace does not change the expiration date; the expiration date is shown to Publishers and returned by the Agent API. Requests enforce the deadline immediately, and a daily sweeper permanently deletes the Share and its ZIP after the window, so the expired Short link cannot be replaced or reactivated.
+An optional deadline on a Playwright Trace Share. When present, it is shown to Publishers and returned by the Agent API. Requests enforce the deadline immediately, and a daily sweeper permanently deletes the Share and its ZIP after the deadline, so the expired Short link cannot be replaced or reactivated. Viewing or downloading a trace never extends its deadline.
 _Avoid_: TTL, timeout, archive policy
+
+**Trace retention policy**:
+The size-based rule applied to the final validated compressed Playwright Trace Artifact size at publish commit. Traces smaller than exactly 1,000,000 bytes have no automatic expiration; traces at or above 1,000,000 bytes expire 168 hours after a successful publish commit. On Replace, same-class traces preserve any existing Trace expiration verbatim, large → small clears it, and small → large sets a new seven-day deadline from replacement commit.
+_Avoid_: Approximate 1 MB cutoff, ZIP lifetime
 
 **Trace structure validation**:
 A best-effort server-side check that a candidate ZIP has a supported Playwright trace structure without extracting or executing its contents or pinning it to a Playwright release. Unrecognized ZIPs are rejected; support may expand as Playwright trace formats evolve.
@@ -65,7 +69,7 @@ Vercel Blob holds Artifact payloads (HTML, Markdown, and Playwright trace ZIPs).
 _Avoid_: Database, S3, filesystem
 
 **Replace**:
-Overwriting an existing Share's Artifact in place — the Short link stays the same. Optional field on publish: paste an existing Short link to target. Replacing an active Playwright Trace Artifact does not extend its existing expiration date.
+Overwriting an existing Share's Artifact in place — the Short link stays the same. Optional field on publish: paste an existing Short link to target. For Playwright Trace Artifacts, a same-class replacement preserves its existing Trace expiration, large → small clears it, and small → large sets a new seven-day deadline from replacement commit.
 _Avoid_: Edit, update, revise
 
 **Delete**:
@@ -73,7 +77,7 @@ Removing a Share entirely — its Short link returns 404. Same authorization as 
 _Avoid_: Remove, unpublish, archive
 
 **My Shares**:
-The list of Shares published by the signed-in **Publisher**, fetched from the server (**Agent API** list). Each row shows slug, **Artifact kind** (`html`, `md`, or `trace`), and **Published by**; Playwright Trace rows also show their expiration date. Clicking one prefills the Replace field for quick overwrite. Only visible after **Publisher sign-in**.
+The list of Shares published by the signed-in **Publisher**, fetched from the server (**Agent API** list). Each row shows slug, **Artifact kind** (`html`, `md`, or `trace`), and **Published by**; Playwright Trace rows also show their size and show an expiration date only when one exists. Clicking one prefills the Replace field for quick overwrite. Only visible after **Publisher sign-in**.
 _Avoid_: History, dashboard, library
 
 **Browser edit token**:
@@ -138,9 +142,9 @@ _Avoid_: skills.sh registry, harness installer, Canvas installer
 - Playwright Trace Artifact uploads use a binary file contract; an upload is not a base64- or JSON-encoded text Artifact
 - **Replace** keeps the same Short link; absent Replace target, publish creates a new Share
 - **Replace** requires **Publisher sign-in** or **Publisher API token**; session or token identity must match **Published by**; **Published by** unchanged on Replace
-- An active Playwright Trace **Share** keeps its original **Trace expiration** when replaced; after expiration and sweeping, its Short link and raw endpoint return 404 and a new Share is required
+- An active Playwright Trace **Share** keeps its original **Trace expiration** on same-class Replace; large → small clears it, while small → large sets a new seven-day deadline; after expiration and sweeping, its Short link and raw endpoint return 404 and a new Share is required
 - A candidate ZIP must pass **Trace structure validation** before it becomes a Playwright Trace Artifact
-- **Trace expiration** is visible in **My Shares** and included in publish/list responses
+- **Trace expiration** is visible in **My Shares** only when present and is included as an ISO date or explicit `null` in trace publish/list responses
 - **Trace expiration** is enforced at request time and finalized by a daily cleanup sweep
 - **Delete** requires the same authorization as **Replace**
 - HTML and Markdown **Shares** are served raw at their Short links — HTML Artifacts as `text/html`, Markdown Artifacts as `text/markdown`; no iframe wrapper

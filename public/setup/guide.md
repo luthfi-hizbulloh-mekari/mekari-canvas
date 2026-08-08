@@ -41,7 +41,7 @@ Token setup does not install or overwrite Skill files. It preserves a valid toke
 - `~/.canvas/config.json` — API base + Bearer token (harness-agnostic)
 - `~/.canvas/publish-manifest.json` — absolute file path → slug mapping for auto-Replace
 
-Playwright traces are sent as raw ZIP bytes through a once-only, immutable direct upload URL and expire 30 days after first publish. A failed commit retry mints a fresh upload URL. Replacing a trace preserves the original expiration; if an expired Share has already been swept, the helper creates a new Share and updates the manifest.
+Playwright traces are sent as raw ZIP bytes through a once-only, immutable direct upload URL. Final validated traces smaller than exactly 1,000,000 bytes have no automatic expiration; traces at or above 1,000,000 bytes expire 168 hours after a successful publish commit. On Replace, the same size class preserves any existing expiration, large → small clears it, and small → large sets a new seven-day deadline from replacement commit. A failed commit retry mints a fresh upload URL. If an expired Share has already been swept, the helper creates a new Share and updates the manifest.
 
 ## Refresh
 

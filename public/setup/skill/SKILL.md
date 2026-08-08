@@ -64,7 +64,7 @@ All authenticated calls use `Authorization: Bearer <token>` from `~/.canvas/conf
 
 Response includes `slug` — Short link is `{apiBase}/s/{slug}`.
 
-Trace publishing is always three steps: mint an upload URL, PUT the ZIP bytes directly, then commit with `uploadId`. Each staged upload is immutable and once-only; mint a fresh upload URL before retrying a failed commit. Never put trace bytes in JSON or base64. Trace Shares expire 30 days after first publish; Replace keeps the original expiration.
+Trace publishing is always three steps: mint an upload URL, PUT the ZIP bytes directly, then commit with `uploadId`. Each staged upload is immutable and once-only; mint a fresh upload URL before retrying a failed commit. Never put trace bytes in JSON or base64. Final validated traces smaller than exactly 1,000,000 bytes have no automatic expiration; traces at or above 1,000,000 bytes expire 168 hours after a successful publish commit. On Replace, the same size class preserves any existing expiration, large → small clears it, and small → large sets a new seven-day deadline from replacement commit.
 
 ## Publish manifest
 

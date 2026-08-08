@@ -7,6 +7,7 @@ import MyShares, { type ServerShare } from "@/components/MyShares";
 import Logo from "@/components/Logo";
 import { authClient } from "@/lib/auth-client";
 import { checkDraft, type Draft } from "@/lib/draft";
+import { formatBytes } from "@/lib/format-bytes";
 import { publishDraft } from "@/lib/publish-draft";
 import { detectTextArtifactKind, validateTextArtifact } from "@/lib/validate";
 
@@ -40,10 +41,6 @@ function parseReplaceSlug(input: string): string {
   if (!trimmed) return "";
   const segment = trimmed.includes("/s/") ? trimmed.split("/s/").pop() ?? "" : trimmed;
   return segment.replace(/\/+$/, "").split(/[?#]/)[0];
-}
-
-function formatBytes(n: number): string {
-  return n >= 1024 ? `${(n / 1024).toFixed(1)} KB` : `${n} B`;
 }
 
 function useScramble(target: string) {

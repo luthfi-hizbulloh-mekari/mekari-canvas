@@ -22,6 +22,7 @@ import {
   STAGING_PREFIX,
   STAGING_RETENTION_MS,
 } from "@/lib/trace-paths";
+import { isExpired } from "@/lib/trace-expiry";
 
 const BLOB_PREFIX = "shares";
 const META_PREFIX = "canvas:share:";
@@ -167,11 +168,15 @@ export class VercelDriver implements StorageDriver {
     if (meta.publishedBy && !previous) {
       transaction.sadd(publisherSlugsKey(meta.publishedBy), meta.slug);
     }
-    if (meta.kind === "trace" && meta.expiresAt) {
-      transaction.zadd(TRACE_EXPIRY_KEY, {
-        score: Date.parse(meta.expiresAt),
-        member: meta.slug,
-      });
+    if (meta.kind === "trace") {
+      if (meta.expiresAt) {
+        transaction.zadd(TRACE_EXPIRY_KEY, {
+          score: Date.parse(meta.expiresAt),
+          member: meta.slug,
+        });
+      } else {
+        transaction.zrem(TRACE_EXPIRY_KEY, meta.slug);
+      }
     }
     await transaction.exec();
   }
@@ -242,9 +247,20 @@ export class VercelDriver implements StorageDriver {
   }
 
   async expiredTraceSlugs(now: number): Promise<string[]> {
-    return getRedis().zrange<string[]>(TRACE_EXPIRY_KEY, 0, now, {
+    const redis = getRedis();
+    const candidates = await redis.zrange<string[]>(TRACE_EXPIRY_KEY, 0, now, {
       byScore: true,
     });
+    const expired: string[] = [];
+    for (const slug of candidates) {
+      const meta = await this.getMeta(slug);
+      if (meta && meta.kind === "trace" && isExpired(meta, now)) {
+        expired.push(slug);
+      } else {
+        await redis.zrem(TRACE_EXPIRY_KEY, slug);
+      }
+    }
+    return expired;
   }
 }
 

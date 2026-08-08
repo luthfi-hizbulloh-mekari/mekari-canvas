@@ -10,7 +10,7 @@ export type PublishedShare = {
   kind: Draft["kind"];
   replaced: boolean;
   shortLink: string;
-  expiresAt?: string;
+  expiresAt?: string | null;
   editToken?: string;
 };
 

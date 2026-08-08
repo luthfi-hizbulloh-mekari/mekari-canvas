@@ -1,14 +1,16 @@
 "use client";
 
 import type { ArtifactKind } from "@/lib/artifact-kind";
+import { formatBytes } from "@/lib/format-bytes";
 
 export type ServerShare = {
   slug: string;
   kind: ArtifactKind;
   createdAt: string;
   updatedAt: string;
+  size: number;
   publishedBy?: string;
-  expiresAt?: string;
+  expiresAt?: string | null;
   legacy?: boolean;
 };
 
@@ -48,6 +50,7 @@ export default function MyShares({
               month: "short",
             })}{" "}
             · {s.kind}
+            {s.kind === "trace" ? ` · ${formatBytes(s.size)}` : ""}
             {s.publishedBy ? ` · ${s.publishedBy}` : " · legacy"}
             {s.expiresAt
               ? ` · expires ${new Date(s.expiresAt).toLocaleDateString("en-GB", {

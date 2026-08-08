@@ -1,11 +1,12 @@
 import { nanoid } from "nanoid";
+import type { TextArtifactKind } from "@/lib/artifact-kind";
 import type { PublishRequest } from "@/lib/publish-request";
 import { authorizeShareMutation } from "@/lib/share-authz";
 import {
   StagedTraceNotFoundError,
 } from "@/lib/storage-errors";
 import { getStorage, type ShareMeta, type StorageDriver } from "@/lib/storage";
-import { traceExpiresAt } from "@/lib/trace-expiry";
+import { decideTraceRetention, isValidTraceSize } from "@/lib/trace-expiry";
 import {
   inspectStagedTrace,
   InvalidStagedTraceError,
@@ -22,6 +23,7 @@ export class PublishError extends Error {
       | "publisher_forbidden"
       | "staged_trace_not_found"
       | "artifact_kind_mismatch"
+      | "invalid_share_metadata"
   ) {
     super(message);
     this.name = "PublishError";
@@ -33,8 +35,16 @@ export type PublishResult = {
   replaced: boolean;
   kind: PublishRequest["kind"];
   publishedBy?: string;
-  expiresAt?: string;
+  expiresAt?: string | null;
 };
+
+function invalidShareMetadataError(): PublishError {
+  return new PublishError(
+    "Existing Share has invalid size metadata",
+    422,
+    "invalid_share_metadata"
+  );
+}
 
 async function prepareArtifact(
   storage: StorageDriver,
@@ -81,6 +91,9 @@ async function replacementMeta(
       "artifact_kind_mismatch"
     );
   }
+  if (request.kind === "trace" && !isValidTraceSize(authz.meta.size)) {
+    throw invalidShareMetadataError();
+  }
   return authz.meta;
 }
 
@@ -102,8 +115,48 @@ function result(meta: ShareMeta, replaced: boolean): PublishResult {
     replaced,
     kind: meta.kind,
     publishedBy: meta.publishedBy,
-    expiresAt: meta.expiresAt,
+    expiresAt: meta.kind === "trace" ? (meta.expiresAt ?? null) : undefined,
   };
+}
+
+function traceMeta(
+  previous: ShareMeta | null,
+  size: number,
+  now: string,
+  publisherEmail: string
+): ShareMeta {
+  const expiresAt = decideTraceRetention(previous, size, now);
+
+  return {
+    slug: previous?.slug ?? nanoid(8),
+    kind: "trace",
+    editTokenHash: previous?.editTokenHash ?? "",
+    createdAt: previous?.createdAt ?? now,
+    updatedAt: now,
+    size,
+    publishedBy: previous ? previous.publishedBy : publisherEmail,
+    ...(expiresAt === undefined ? {} : { expiresAt }),
+  };
+}
+
+function textMeta(
+  previous: ShareMeta | null,
+  size: number,
+  now: string,
+  publisherEmail: string,
+  kind: TextArtifactKind
+): ShareMeta {
+  return previous
+    ? { ...previous, size, updatedAt: now }
+    : {
+        slug: nanoid(8),
+        kind,
+        editTokenHash: "",
+        createdAt: now,
+        updatedAt: now,
+        size,
+        publishedBy: publisherEmail,
+      };
 }
 
 export async function publishShare(
@@ -116,18 +169,9 @@ export async function publishShare(
     const previous = await replacementMeta(request, publisherEmail);
     const size = await prepareArtifact(storage, request);
     const now = new Date().toISOString();
-    const meta: ShareMeta = previous
-      ? { ...previous, size, updatedAt: now }
-      : {
-          slug: nanoid(8),
-          kind: request.kind,
-          editTokenHash: "",
-          createdAt: now,
-          updatedAt: now,
-          size,
-          publishedBy: publisherEmail,
-          ...(request.kind === "trace" ? { expiresAt: traceExpiresAt(now) } : {}),
-        };
+    const meta: ShareMeta = request.kind === "trace"
+      ? traceMeta(previous, size, now, publisherEmail)
+      : textMeta(previous, size, now, publisherEmail, request.kind);
 
     await writeShare(storage, meta, request);
     return result(meta, previous !== null);

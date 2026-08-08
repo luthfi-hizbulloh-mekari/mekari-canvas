@@ -5,3 +5,5 @@ Playwright Trace Shares are retained for 30 days from first publish. Replacing a
 **Why:** trace ZIPs are large and may contain sensitive diagnostic data, so they should not consume storage or remain publicly accessible indefinitely. Deleting metadata as well as the blob keeps the existing Replace authorization model truthful: a dead Share cannot be found or mutated.
 
 **Considered option:** retain an expired Share tombstone so a later Replace could revive the slug — rejected because it preserves metadata for deleted content and makes expiration less final and predictable.
+
+Superseded in part by ADR 0014
