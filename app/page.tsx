@@ -381,7 +381,7 @@ export default function Page() {
               CANVAS
             </h1>
             <div className="hint">
-              <span className="key">drop .html/.md/.zip</span>
+              <span className="key">drop .html/.md/trace.zip</span>
               <span className="sep">/</span>
               <span className="key">⌘V</span>
               <span className="sep">/</span>
@@ -471,13 +471,6 @@ export default function Page() {
         error={sharesError}
       />
 
-      <div className="marquee">
-        <span className="track">
-          {Array.from({ length: 2 }, () =>
-            "paste html or md or drop a trace — get a share link — mekari publishers — no drafts — ".repeat(4)
-          ).join("")}
-        </span>
-      </div>
     </div>
   );
 }

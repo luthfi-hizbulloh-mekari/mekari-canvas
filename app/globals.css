@@ -586,45 +586,6 @@ textarea {
   color: #ff4d6d;
 }
 
-/* ---------- marquee ---------- */
-
-.marquee {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  padding: 18px 0;
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.3em;
-  text-transform: uppercase;
-  color: rgba(232, 230, 240, 0.18);
-  z-index: 5;
-  border-top: 1px solid var(--line);
-  background: rgba(8, 8, 11, 0.7);
-  backdrop-filter: blur(8px);
-  user-select: none;
-}
-
-.marquee .track {
-  display: inline-block;
-  animation: scroll 30s linear infinite;
-}
-
-@keyframes scroll {
-  to {
-    transform: translateX(-50%);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .marquee .track {
-    animation: none;
-  }
-}
-
 /* ---------- agent publish ---------- */
 
 .publisher-bar {
