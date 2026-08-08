@@ -1,5 +1,6 @@
 "use client";
 
+import { Copy, RefreshCw, Trash2 } from "lucide-react";
 import type { ArtifactKind } from "@/lib/artifact-kind";
 import { formatBytes } from "@/lib/format-bytes";
 
@@ -51,7 +52,7 @@ export default function MyShares({
             })}{" "}
             · {s.kind}
             {s.kind === "trace" ? ` · ${formatBytes(s.size)}` : ""}
-            {s.publishedBy ? ` · ${s.publishedBy}` : " · legacy"}
+            {!s.publishedBy ? " · legacy" : ""}
             {s.expiresAt
               ? ` · expires ${new Date(s.expiresAt).toLocaleDateString("en-GB", {
                   day: "2-digit",
@@ -61,14 +62,29 @@ export default function MyShares({
               : ""}
             {s.legacy && !legacyEditTokens[s.slug] ? " · no edit token" : ""}
           </span>
-          <button className="op" onClick={() => onCopy(`${origin}/s/${s.slug}`)}>
-            copy
+          <button
+            className="op"
+            title="copy link"
+            aria-label={`copy link to /s/${s.slug}`}
+            onClick={() => onCopy(`${origin}/s/${s.slug}`)}
+          >
+            <Copy size={14} />
           </button>
-          <button className="op" onClick={() => onReplace(s.slug)}>
-            replace
+          <button
+            className="op"
+            title="replace"
+            aria-label={`replace /s/${s.slug}`}
+            onClick={() => onReplace(s.slug)}
+          >
+            <RefreshCw size={14} />
           </button>
-          <button className="op danger" onClick={() => onDelete(s)}>
-            delete
+          <button
+            className="op danger"
+            title="delete"
+            aria-label={`delete /s/${s.slug}`}
+            onClick={() => onDelete(s)}
+          >
+            <Trash2 size={14} />
           </button>
         </div>
       ))}

@@ -571,9 +571,8 @@ textarea {
 }
 
 .share-row .op {
-  font-size: 10px;
-  letter-spacing: 0.15em;
-  text-transform: uppercase;
+  display: inline-flex;
+  align-items: center;
   color: var(--dim);
   transition: color 0.15s;
 }

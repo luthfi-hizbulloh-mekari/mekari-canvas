@@ -35,6 +35,7 @@ describe("MyShares trace metadata", () => {
 
     expect(markup).toContain("1.0 MB");
     expect(markup).toContain("expires");
+    expect(markup).not.toContain(common.publishedBy);
   });
 
   it("renders trace size without expiration text for a permanent trace", () => {
