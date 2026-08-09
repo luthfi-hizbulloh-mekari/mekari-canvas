@@ -8,11 +8,14 @@ DEFAULT_MANIFEST_URL="https://mekari-canvas.vercel.app/setup/manifest.json"
 TOKEN_VALID=0
 TOKEN_REJECTED=1
 TOKEN_INCONCLUSIVE=2
+CURL_API=(--connect-timeout 10 --max-time 60)
+CURL_UPLOAD=(--connect-timeout 10 --speed-limit 1024 --speed-time 120)
 
 die() { echo "mekari-canvas: $*" >&2; exit 1; }
 
 is_api_base() {
-  [[ "$1" =~ ^https?://[^/?#[:space:]]+$ ]]
+  [[ "$1" =~ ^https?://[^/?#[:space:]]+$ ]] && return 0
+  return 1
 }
 
 require_jq() {
@@ -27,13 +30,42 @@ load_config() {
   [[ -n "$API_BASE" && -n "$TOKEN" ]] || die "invalid config at $CONFIG"
 }
 
-api() {
-  local method="$1" path="$2"
+http() {
+  local method="$1" url="$2" body_file error_file
   shift 2
-  curl -sf -X "$method" \
+  body_file=$(mktemp)
+  error_file=$(mktemp)
+  HTTP_ERROR=""
+  HTTP_STATUS=$(curl -sS -o "$body_file" -w '%{http_code}' -X "$method" "$@" "$url" 2>"$error_file") || {
+    HTTP_ERROR=$(<"$error_file")
+    HTTP_ERROR=${HTTP_ERROR//"$url"/[request URL]}
+    if [[ -n "${TOKEN:-}" ]]; then HTTP_ERROR=${HTTP_ERROR//"$TOKEN"/[redacted]}; fi
+    rm -f "$body_file" "$error_file"; HTTP_STATUS=000; HTTP_BODY=""; return 1
+  }
+  HTTP_BODY=$(<"$body_file")
+  rm -f "$body_file" "$error_file"
+}
+
+error_message() { # body fallback
+  jq -r --arg fallback "$2" \
+    'if type == "object" and (.error | type) == "string" and (.error | length) > 0
+     then .error else $fallback end' <<<"$1" 2>/dev/null || printf '%s' "$2"
+}
+
+api() {
+  local method="$1" path="$2" message
+  shift 2
+  if ! http "$method" "$API_BASE$path" "${CURL_API[@]}" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
-    "$API_BASE$path" "$@"
+    "$@"; then
+    die "request failed (HTTP $HTTP_STATUS; $method $path): $HTTP_ERROR"
+  fi
+  if [[ "$HTTP_STATUS" -lt 200 || "$HTTP_STATUS" -ge 300 ]]; then
+    message=$(error_message "$HTTP_BODY" "request failed")
+    die "$message (HTTP $HTTP_STATUS; $method $path)"
+  fi
+  printf '%s' "$HTTP_BODY"
 }
 
 detect_kind() {
@@ -46,35 +78,56 @@ detect_kind() {
     zip) echo trace ;;
     *)
       if head -c 2048 "$file" | grep -qiE '<html|<!DOCTYPE'; then echo html; else echo md; fi
-      ;;
+    ;;
   esac
 }
 
 publish_request() {
-  local payload="$1" response_file
-  response_file=$(mktemp)
-  PUBLISH_STATUS=$(curl -sS -o "$response_file" -w '%{http_code}' -X POST \
+  local payload="$1"
+  if ! http POST "$API_BASE/api/publish" "${CURL_API[@]}" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
-    -d "$payload" \
-    "$API_BASE/api/publish")
-  PUBLISH_BODY=$(<"$response_file")
-  PUBLISH_ERROR_CODE=$(echo "$PUBLISH_BODY" | jq -r '.code // empty' 2>/dev/null || true)
-  rm -f "$response_file"
+    -d "$payload"; then
+    die "publish failed (HTTP $HTTP_STATUS; POST /api/publish): $HTTP_ERROR"
+  fi
 }
 
 stage_trace_upload() {
-  local file="$1" upload upload_url
+  local file="$1" upload upload_id upload_url
   upload=$(api POST /api/trace-uploads)
-  TRACE_UPLOAD_ID=$(echo "$upload" | jq -r '.uploadId // empty')
+  upload_id=$(echo "$upload" | jq -r '.uploadId // empty')
   upload_url=$(echo "$upload" | jq -r '.uploadUrl // empty')
-  [[ -n "$TRACE_UPLOAD_ID" && -n "$upload_url" ]] || die "invalid trace upload response"
-
-  local curl_args=(-sf -H "Content-Type: application/zip" --upload-file "$file")
+  [[ -n "$upload_id" && -n "$upload_url" ]] || die "invalid trace upload response"
+  local upload_auth=()
   if [[ "$upload_url" == "$API_BASE/api/trace-uploads/"* ]]; then
-    curl_args+=(-H "Authorization: Bearer $TOKEN")
+    upload_auth=(-H "Authorization: Bearer $TOKEN")
   fi
-  curl "${curl_args[@]}" "$upload_url" >/dev/null
+  if ! http PUT "$upload_url" "${CURL_UPLOAD[@]}" \
+    ${upload_auth[@]+"${upload_auth[@]}"} \
+    -H "Content-Type: application/zip" --upload-file "$file"; then
+    die "trace upload failed (HTTP $HTTP_STATUS)"
+  fi
+  if [[ "$HTTP_STATUS" -lt 200 || "$HTTP_STATUS" -ge 300 ]]; then
+    die "trace upload failed (HTTP $HTTP_STATUS)"
+  fi
+  printf '%s' "$upload_id"
+}
+
+abs_path() {
+  local file="$1"
+  printf '%s/%s' "$(cd "$(dirname "$file")" && pwd)" "$(basename "$file")"
+}
+
+manifest_update() { # jq args...
+  local tmp
+  mkdir -p "$(dirname "$MANIFEST_FILE")"
+  [[ -f "$MANIFEST_FILE" ]] || echo '{}' > "$MANIFEST_FILE"
+  tmp=$(mktemp)
+  if ! jq "$@" "$MANIFEST_FILE" > "$tmp"; then
+    rm -f "$tmp"
+    die "could not update $MANIFEST_FILE"
+  fi
+  mv "$tmp" "$MANIFEST_FILE"
 }
 
 read_manifest_slug() {
@@ -82,32 +135,23 @@ read_manifest_slug() {
   require_jq
   [[ -f "$MANIFEST_FILE" ]] || return 1
   local abs
-  abs=$(cd "$(dirname "$file")" && pwd)/$(basename "$file")
+  abs=$(abs_path "$file")
   jq -r --arg p "$abs" '.[$p] // empty' "$MANIFEST_FILE"
 }
 
 write_manifest_slug() {
   local file="$1" slug="$2"
   require_jq
-  mkdir -p "$(dirname "$MANIFEST_FILE")"
   local abs
-  abs=$(cd "$(dirname "$file")" && pwd)/$(basename "$file")
-  if [[ -f "$MANIFEST_FILE" ]]; then
-    tmp=$(mktemp)
-    jq --arg p "$abs" --arg s "$slug" '.[$p] = $s' "$MANIFEST_FILE" > "$tmp"
-    mv "$tmp" "$MANIFEST_FILE"
-  else
-    echo "{\"$abs\": \"$slug\"}" | jq . > "$MANIFEST_FILE"
-  fi
+  abs=$(abs_path "$file")
+  manifest_update --arg p "$abs" --arg s "$slug" '.[$p] = $s'
 }
 
 remove_manifest_slug() {
   local slug="$1"
   require_jq
   [[ -f "$MANIFEST_FILE" ]] || return 0
-  tmp=$(mktemp)
-  jq --arg s "$slug" 'with_entries(select(.value != $s))' "$MANIFEST_FILE" > "$tmp"
-  mv "$tmp" "$MANIFEST_FILE"
+  manifest_update --arg s "$slug" 'with_entries(select(.value != $s))'
 }
 
 write_config() {
@@ -137,16 +181,16 @@ write_config() {
 }
 
 validate_saved_token() {
-  local api_base="$1" token="$2" status
-
-  status=$(curl -sS --connect-timeout 10 --max-time 30 \
-    -o /dev/null -w '%{http_code}' \
+  local api_base="$1" token="$2"
+  if ! http GET "$api_base/api/shares" "${CURL_API[@]}" \
     -H "Authorization: Bearer $token" \
-    "$api_base/api/shares") || return "$TOKEN_INCONCLUSIVE"
-  if [[ "$status" -ge 200 && "$status" -lt 300 ]]; then
+    -H "Content-Type: application/json"; then
+    return "$TOKEN_INCONCLUSIVE"
+  fi
+  if [[ "$HTTP_STATUS" -ge 200 && "$HTTP_STATUS" -lt 300 ]]; then
     return "$TOKEN_VALID"
   fi
-  if [[ "$status" == 401 || "$status" == 403 ]]; then
+  if [[ "$HTTP_STATUS" == 401 || "$HTTP_STATUS" == 403 ]]; then
     return "$TOKEN_REJECTED"
   fi
   return "$TOKEN_INCONCLUSIVE"
@@ -207,8 +251,12 @@ cmd_setup() {
   fi
 
   local manifest api_base exchange_url
-  manifest=$(curl -fsS --connect-timeout 10 --max-time 30 "$manifest_url") \
-    || die "could not fetch setup manifest"
+  if ! http GET "$manifest_url" "${CURL_API[@]}"; then
+    die "could not fetch setup manifest"
+  fi
+  [[ "$HTTP_STATUS" -ge 200 && "$HTTP_STATUS" -lt 300 ]] \
+    || die "could not fetch setup manifest (HTTP $HTTP_STATUS)"
+  manifest="$HTTP_BODY"
   api_base=$(jq -er \
     'select(type == "object") | .apiBase | select(type == "string" and length > 0)' \
     <<<"$manifest") || die "invalid setup manifest"
@@ -220,24 +268,19 @@ cmd_setup() {
   [[ "$exchange_url" == /* && "$exchange_url" != //* ]] \
     || die "invalid exchange URL in setup manifest"
 
-  local payload response_with_status status response token response_api_base
+  local payload response token response_api_base
   payload=$(jq -n --arg code "$code" \
     '{code: $code, label: "Mekari Canvas (shared)"}')
-  response_with_status=$(curl -sS --connect-timeout 10 --max-time 30 \
-    -w $'\n%{http_code}' -X POST \
+  if ! http POST "$api_base$exchange_url" "${CURL_API[@]}" \
     -H "Content-Type: application/json" \
-    -d "$payload" \
-    "$api_base$exchange_url") || die "could not reach setup exchange"
-  status=${response_with_status##*$'\n'}
-  response=${response_with_status%$'\n'*}
-
-  if [[ "$status" -lt 200 || "$status" -ge 300 ]]; then
+    -d "$payload"; then
+    die "could not reach setup exchange"
+  fi
+  response="$HTTP_BODY"
+  if [[ "$HTTP_STATUS" -lt 200 || "$HTTP_STATUS" -ge 300 ]]; then
     local message
-    message=$(jq -r \
-      'if type == "object" and (.error | type) == "string" and (.error | length) > 0
-       then .error else "setup exchange failed" end' \
-      <<<"$response" 2>/dev/null) || message="setup exchange failed"
-    die "$message (HTTP $status)"
+    message=$(error_message "$response" "setup exchange failed")
+    die "$message (HTTP $HTTP_STATUS)"
   fi
 
   token=$(jq -r \
@@ -254,6 +297,17 @@ cmd_setup() {
 
   write_config "$api_base" "$token"
   echo "Setup complete. Shared Publisher API token saved to $CONFIG"
+}
+
+publish_payload() { # kind ref replace_slug
+  local kind="$1" ref="$2" replace_slug="$3"
+  if [[ "$kind" == trace ]]; then
+    jq -n --arg uploadId "$ref" --arg slug "$replace_slug" \
+      '{kind: "trace", uploadId: $uploadId} + (if $slug == "" then {} else {replaceSlug: $slug} end)'
+  else
+    jq -n --arg content "$ref" --arg kind "$kind" --arg slug "$replace_slug" \
+      '{content: $content, kind: $kind} + (if $slug == "" then {} else {replaceSlug: $slug} end)'
+  fi
 }
 
 cmd_publish() {
@@ -278,43 +332,33 @@ cmd_publish() {
   fi
 
   if [[ "$kind" == trace ]]; then
-    stage_trace_upload "$file"
-    upload_id="$TRACE_UPLOAD_ID"
+    upload_id=$(stage_trace_upload "$file")
   else
     content=$(<"$file")
   fi
 
   local payload
-  if [[ "$kind" == trace ]]; then
-    payload=$(jq -n --arg uploadId "$upload_id" --arg slug "$replace_slug" \
-      '{kind: "trace", uploadId: $uploadId} + (if $slug == "" then {} else {replaceSlug: $slug} end)')
-  else
-    payload=$(jq -n --arg content "$content" --arg kind "$kind" --arg slug "$replace_slug" \
-      '{content: $content, kind: $kind} + (if $slug == "" then {} else {replaceSlug: $slug} end)')
-  fi
-
+  payload=$(publish_payload "$kind" "${upload_id:-$content}" "$replace_slug")
   publish_request "$payload"
-  if [[ "$PUBLISH_STATUS" == 404 && "$PUBLISH_ERROR_CODE" == share_not_found && -n "$replace_slug" ]]; then
+  local error_code
+  error_code=$(echo "$HTTP_BODY" | jq -r '.code // empty' 2>/dev/null || true)
+  if [[ "$HTTP_STATUS" == 404 && "$error_code" == share_not_found && -n "$replace_slug" ]]; then
     remove_manifest_slug "$replace_slug"
     replace_slug=""
     if [[ "$kind" == trace ]]; then
       # The failed commit consumes its immutable staged upload; retry with a fresh one.
-      stage_trace_upload "$file"
-      upload_id="$TRACE_UPLOAD_ID"
-      payload=$(jq -n --arg uploadId "$upload_id" '{kind: "trace", uploadId: $uploadId}')
-    else
-      payload=$(jq -n --arg content "$content" --arg kind "$kind" \
-        '{content: $content, kind: $kind}')
+      upload_id=$(stage_trace_upload "$file")
     fi
+    payload=$(publish_payload "$kind" "${upload_id:-$content}" "")
     publish_request "$payload"
   fi
-  if [[ "$PUBLISH_STATUS" -lt 200 || "$PUBLISH_STATUS" -ge 300 ]]; then
+  if [[ "$HTTP_STATUS" -lt 200 || "$HTTP_STATUS" -ge 300 ]]; then
     local message
-    message=$(echo "$PUBLISH_BODY" | jq -r '.error // "publish failed"' 2>/dev/null || true)
-    die "$message (HTTP $PUBLISH_STATUS)"
+    message=$(error_message "$HTTP_BODY" "publish failed")
+    die "$message (HTTP $HTTP_STATUS)"
   fi
 
-  slug=$(echo "$PUBLISH_BODY" | jq -r '.slug // empty')
+  slug=$(echo "$HTTP_BODY" | jq -r '.slug // empty')
   [[ -n "$slug" ]] || die "invalid publish response"
   write_manifest_slug "$file" "$slug"
   echo "${API_BASE}/s/${slug}"
@@ -322,8 +366,9 @@ cmd_publish() {
 
 cmd_list() {
   load_config
-  api GET /api/shares | jq -r '.shares[] | "\(.slug)\t\(.kind)\t\(.updatedAt)\t\(.expiresAt // \"permanent\")"' | column -t -s $'\t' 2>/dev/null \
-    || api GET /api/shares | jq .
+  api GET /api/shares \
+    | jq -r '.shares[] | [.slug, .kind, .updatedAt, (.expiresAt // "permanent")] | @tsv' \
+    | column -t -s $'\t'
 }
 
 cmd_delete() {
