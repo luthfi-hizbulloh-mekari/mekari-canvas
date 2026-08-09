@@ -1,5 +1,6 @@
 ---
 name: mekari-canvas
+version: 1.0.0
 description: >-
   Publish and manage Mekari Canvas Shares (HTML, Markdown, or Playwright Trace Artifacts) via the
   Agent API. Use when the user invokes /mekari-canvas, wants to publish a
@@ -51,7 +52,7 @@ Resolve the path relative to this installed Skill directory.
 
 ## HTTP API (if scripting manually)
 
-All authenticated calls use `Authorization: Bearer <token>` from `~/.canvas/config.json`.
+All authenticated calls use `Authorization: Bearer <token>` from `~/.canvas/config.json` and send this package's frontmatter version as `X-Mekari-Canvas-Skill-Version`.
 
 | Method | Path | Body |
 |--------|------|------|
@@ -65,6 +66,8 @@ All authenticated calls use `Authorization: Bearer <token>` from `~/.canvas/conf
 
 Response includes `slug` and optional `title` — Short link is `{apiBase}/s/{slug}`.
 
+Canvas returns HTTP 200 with `skillPackageWarning` on any non-blocked publish below the current version; text creates also warn when the Skill package version is missing or unrecognized. A breaking publish or trace-upload operation from a missing, unrecognized, or below-minimum version returns HTTP 400 with `code: "skill_package_stale"` and Skill refresh steps. Refresh with `npx skills update` or `npx skills upgrade`; if necessary, use the full Add command in **Setup and refresh**.
+
 Trace publishing is always three steps: mint an upload URL, PUT the ZIP bytes directly, then commit with `uploadId`. Each staged upload is immutable and once-only; mint a fresh upload URL before retrying a failed commit. Send trace bytes as the raw PUT body. Final validated traces smaller than exactly 1,000,000 bytes have no automatic expiration; traces at or above 1,000,000 bytes expire 168 hours after a successful publish commit. On Edit, the same size class preserves any existing expiration, large → small clears it, and small → large sets a new seven-day deadline from the Artifact overwrite commit.
 
 ## Publish manifest
@@ -77,6 +80,7 @@ Maintain `~/.canvas/publish-manifest.json` mapping **absolute file path → slug
 - **Artifact kind** is immutable on Edit (`.md` → `md`, `.html` → `html`, trace `.zip` → `trace`).
 - `.zip` is accepted only when Canvas recognizes Playwright trace structure; arbitrary ZIPs are rejected.
 - **Published by** is set at create from the token owner and remains unchanged on Edit.
+- `replaceSlug` is retired and rejected. Use `editSlug`; a retired target is never treated as a create.
 - If an Artifact-backed auto-Edit gets 404 because a trace expired and was swept, remove the path mapping and retry as a new Share. A Title-only Edit returns the server error.
 - Return the Short link to the user after publish.
 - Legacy Shares without **Published by** are not manageable via Agent API.

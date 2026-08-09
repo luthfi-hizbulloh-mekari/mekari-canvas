@@ -1,10 +1,15 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
+import { CURRENT_SKILL_PACKAGE_VERSION } from "@/lib/skill-package-freshness";
+import {
+  MEKARI_CANVAS_INSTALL_COMMAND,
+  SKILL_REFRESH_STEPS,
+} from "@/lib/skill-distribution";
 
 const execFileAsync = promisify(execFile);
 const SCRIPT = path.resolve("public/setup/skill/scripts/mekari-canvas.sh");
@@ -72,6 +77,48 @@ async function withServer(
 
 afterEach(async () => {
   await Promise.all(temporaryHomes.splice(0).map((home) => rm(home, { recursive: true })));
+});
+
+describe("mekari-canvas Skill package metadata", () => {
+  async function copyScript(home: string) {
+    const script = path.join(home, "skill", "scripts", "mekari-canvas.sh");
+    await mkdir(path.dirname(script), { recursive: true });
+    await copyFile(SCRIPT, script);
+    return script;
+  }
+
+  it("reports the friendly package-version error when SKILL.md is missing", async () => {
+    const home = await makeHome();
+    const script = await copyScript(home);
+
+    await expect(execFileAsync("bash", [script, "help"], {
+      env: { ...process.env, HOME: home },
+    })).rejects.toMatchObject({
+      stderr: expect.stringContaining("invalid or missing Skill package version"),
+    });
+  });
+
+  it("reads version only from frontmatter, not later Markdown sections", async () => {
+    const home = await makeHome();
+    const script = await copyScript(home);
+    await writeFile(path.join(home, "skill", "SKILL.md"), [
+      "---",
+      "name: mekari-canvas",
+      "version: 1.0.0",
+      "---",
+      "# Skill",
+      "---",
+      "version: 9.9.9",
+      "",
+    ].join("\n"));
+
+    const result = await execFileAsync("bash", [script, "help"], {
+      env: { ...process.env, HOME: home },
+    });
+
+    expect(result.stdout).toContain("Mekari Canvas Agent publish");
+    expect(result.stderr).toBe("");
+  });
 });
 
 describe("mekari-canvas setup", () => {
@@ -233,6 +280,9 @@ describe("mekari-canvas setup", () => {
       (request, response) => {
         requests += 1;
         expect(request.url).toBe("/api/shares");
+        expect(request.headers["x-mekari-canvas-skill-version"]).toBe(
+          CURRENT_SKILL_PACKAGE_VERSION
+        );
         response.writeHead(503, { "content-type": "application/json" });
         response.end('{"error":"temporarily unavailable"}');
       },
@@ -332,6 +382,9 @@ describe("mekari-canvas publish helper", () => {
       (request, response) => {
         requests += 1;
         expect(request.url).toBe("/api/shares");
+        expect(request.headers["x-mekari-canvas-skill-version"]).toBe(
+          CURRENT_SKILL_PACKAGE_VERSION
+        );
         response.writeHead(200, { "content-type": "application/json" });
         response.end(
           JSON.stringify({
@@ -366,7 +419,10 @@ describe("mekari-canvas publish helper", () => {
 
   it("reports a non-empty HTTP 500 error when delete fails", async () => {
     await withServer(
-      (_request, response) => {
+      (request, response) => {
+        expect(request.headers["x-mekari-canvas-skill-version"]).toBe(
+          CURRENT_SKILL_PACKAGE_VERSION
+        );
         response.writeHead(500, { "content-type": "application/json" });
         response.end('{"error":"delete unavailable"}');
       },
@@ -406,6 +462,9 @@ describe("mekari-canvas publish helper", () => {
     await withServer(
       (request, response) => {
         expect(request.url).toBe("/api/publish");
+        expect(request.headers["x-mekari-canvas-skill-version"]).toBe(
+          CURRENT_SKILL_PACKAGE_VERSION
+        );
         readRequestBody(request, () => {
           response.writeHead(502, { "content-type": "text/plain" });
           response.end("upstream failed");
@@ -452,6 +511,9 @@ describe("mekari-canvas publish helper", () => {
     await withServer(
       (request, response) => {
         expect(request.url).toBe("/api/publish");
+        expect(request.headers["x-mekari-canvas-skill-version"]).toBe(
+          CURRENT_SKILL_PACKAGE_VERSION
+        );
         readRequestBody(request, (body) => {
           commits.push(JSON.parse(body));
           response.writeHead(200, { "content-type": "application/json" });
@@ -471,6 +533,61 @@ describe("mekari-canvas publish helper", () => {
 
         expect(result.stdout).toContain(`${baseUrl}/s/abc12345`);
         expect(commits).toEqual([{ editSlug: "abc12345", title: "PR #412 handoff" }]);
+      }
+    );
+  });
+
+  it("prints a successful publish freshness warning to stderr", async () => {
+    await withServer(
+      (request, response) => {
+        expect(request.url).toBe("/api/publish");
+        readRequestBody(request, () => {
+          response.writeHead(200, { "content-type": "application/json" });
+          response.end(JSON.stringify({
+            slug: "abc12345",
+            skillPackageWarning: "Refresh the Mekari Canvas Skill package.",
+          }));
+        });
+      },
+      async (baseUrl) => {
+        const home = await makeHome({ apiBase: baseUrl, token: "test-token" });
+        const file = path.join(home, "share.md");
+        await writeFile(file, "# Share\n");
+
+        const result = await runCanvas(home, "publish", "--new", file);
+
+        expect(result.stdout).toContain(`${baseUrl}/s/abc12345`);
+        expect(result.stderr).toContain("Refresh the Mekari Canvas Skill package.");
+      }
+    );
+  });
+
+  it("keeps the fallback install command copyable in a stale block", async () => {
+    await withServer(
+      (request, response) => {
+        expect(request.url).toBe("/api/publish");
+        readRequestBody(request, () => {
+          response.writeHead(400, { "content-type": "application/json" });
+          response.end(JSON.stringify({
+            error: `Skill package is stale.\n\n${SKILL_REFRESH_STEPS}`,
+            code: "skill_package_stale",
+          }));
+        });
+      },
+      async (baseUrl) => {
+        const home = await makeHome({ apiBase: baseUrl, token: "test-token" });
+        const file = path.join(home, "share.md");
+        await writeFile(file, "# Share\n");
+
+        try {
+          await runCanvas(home, "publish", "--new", file);
+          throw new Error("Expected stale publish to fail");
+        } catch (error) {
+          const stderr = String((error as { stderr?: string }).stderr ?? "");
+          expect(stderr).toContain("publish failed (HTTP 400): Skill package is stale.");
+          expect(stderr.trim().split("\n").at(-1)).toBe(MEKARI_CANVAS_INSTALL_COMMAND);
+          expect(stderr).not.toContain(`${MEKARI_CANVAS_INSTALL_COMMAND} (HTTP 400)`);
+        }
       }
     );
   });

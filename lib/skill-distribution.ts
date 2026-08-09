@@ -1,6 +1,15 @@
 export const MEKARI_CANVAS_INSTALL_COMMAND =
   "npx skills add https://github.com/luthfi-hizbulloh-mekari/mekari-canvas --skill mekari-canvas --global --agent cursor --agent claude-code --agent codex --yes";
 
+export const SKILL_REFRESH_STEPS = [
+  "npx skills update",
+  "# or",
+  "npx skills upgrade",
+  "",
+  "If updating does not refresh the package, reinstall it:",
+  MEKARI_CANVAS_INSTALL_COMMAND,
+].join("\n");
+
 export type SkillSetup = {
   code: string;
   expiresAt: string;

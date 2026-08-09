@@ -104,12 +104,28 @@ _Avoid_: Skill pack, installer, plugin
 The public, versioned set of `SKILL.md` and supporting files published in the Mekari Canvas GitHub repository. It is the canonical source installed or refreshed globally through the standard **Skills CLI** for the current supported **Agent surfaces**: Cursor, Claude Code, and Codex CLI.
 _Avoid_: Setup bundle, integration, harness files
 
+**Skill package version**:
+The semver of a **Skill package** release, declared in that package. Identifies which Skill package an Agent publish client is using. Distinct from Setup manifest metadata and from the Canvas app release.
+_Avoid_: Script version, skill.sh version, API version, setup version
+
+**Current Skill package version**:
+The Skill package version Canvas considers newest and recommends for Agent publish.
+_Avoid_: Latest skill, tip version
+
+**Minimum Skill package version**:
+The oldest Skill package version Canvas accepts for Agent publish without a hard block. Clients below it, and clients with no Skill package version identity, are treated as incompatible for breaking operations.
+_Avoid_: Required version, min client, protocol version
+
+**Stale Skill package**:
+An installed Skill package that is behind **Current Skill package version**, or below **Minimum Skill package version**. A non-blocked publish from a stale package yields a warning; a plain text create also warns for a legacy package. Falling below minimum (or missing version identity on a breaking path) yields a block that includes **Skills CLI** upgrade steps.
+_Avoid_: Outdated skill, old script, incompatible client (as the user-facing term)
+
 **Setup manifest**:
 Public thin JSON hosted on the Canvas site (`/setup/manifest.json`) listing only the API base URL and exchange endpoint. Companion MD (`/setup/guide.md`) gives human-readable steps. The **Add skill** page renders a copy-paste prompt block (**Skills CLI** package source + **Setup code**) when the selected **Agent surface** has no supported deep link or the launch fails.
 _Avoid_: Config file, README, integration doc
 
 **Skill refresh**:
-Re-running the setup prompt for an existing installation — refreshes the current **Skill package** while preserving a valid shared **Publisher API token**. A missing or rejected token may be replaced using the new **Setup code**.
+Updating an installed **Skill package** through the **Skills CLI** (prefer `update`/`upgrade`, else re-`add`) and/or re-running the setup prompt — refreshes managed skill files while preserving a valid shared **Publisher API token**. A missing or rejected token may be replaced using the new **Setup code**. This is the upgrade path for a **Stale Skill package**.
 _Avoid_: Reconnect, reauthorize, duplicate installation
 
 **Agent publish**:
@@ -164,6 +180,9 @@ _Avoid_: skills.sh registry, harness installer, Canvas installer
 - **Skill refresh** replaces the managed skill files but leaves the existing **Publisher API token** and unrelated local files untouched
 - A **Skill refresh** checks the shared token before exchanging the new **Setup code**; valid credentials are reused, while missing or rejected credentials are replaced
 - The **Skills CLI** owns **Skill package** installation and refresh; the Mekari Canvas setup command owns only token exchange/reuse and `~/.canvas/config.json`
+- Agent publish clients identify their **Skill package version** to the **Agent API**; missing identity means a pre-version (legacy) client
+- A non-blocked `/api/publish` below **Current Skill package version** yields a warning with **Skill refresh** steps; a plain text create also warns for a below-minimum or legacy client, while below minimum or legacy on a breaking path yields a block with the same steps
+- **Current Skill package version** and **Minimum Skill package version** are owned by the Canvas deployment alongside the canonical **Skill package**
 - The existing public `mekari-canvas` GitHub repository is the canonical source for the **Skill package**; the **Skills CLI** distributes it globally to Cursor, Claude Code, and Codex CLI, while the selected surface only launches the prompt
 - **Add skill** uses a native deep link when the selected **Agent surface** supports one; otherwise it keeps the setup popup available with the copyable raw prompt fallback
 

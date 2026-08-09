@@ -17,17 +17,25 @@ async function publisherEmailFromSession(req: Request): Promise<string | null> {
   return email.toLowerCase();
 }
 
+export type PublisherIdentity = { email: string; via: "session" | "token" };
+
 /** Single identity-resolution point: session cookie or Publisher API Bearer token. */
-export async function getPublisherEmail(req: Request): Promise<string | null> {
+export async function getPublisherIdentity(req: Request): Promise<PublisherIdentity | null> {
   const bypass = devBypassEmail();
-  if (bypass) return bypass;
+  if (bypass) return { email: bypass, via: "session" };
 
   const token = bearerToken(req);
   if (token) {
-    return validateBearerToken(token);
+    const email = await validateBearerToken(token);
+    return email ? { email, via: "token" } : null;
   }
 
-  return publisherEmailFromSession(req);
+  const email = await publisherEmailFromSession(req);
+  return email ? { email, via: "session" } : null;
+}
+
+export async function getPublisherEmail(req: Request): Promise<string | null> {
+  return (await getPublisherIdentity(req))?.email ?? null;
 }
 
 /** Session-only identity (setup code mint, token list/revoke). */

@@ -1,16 +1,30 @@
 import { nanoid } from "nanoid";
 import { getApiBase } from "@/lib/api-base";
-import { getPublisherEmail } from "@/lib/publisher-session";
+import { getPublisherIdentity } from "@/lib/publisher-session";
+import { checkSkillPackage } from "@/lib/skill-package-freshness";
 import { StorageMisconfiguredError } from "@/lib/storage-errors";
 import { getStorage } from "@/lib/storage";
 import { UPLOAD_ID_LENGTH } from "@/lib/trace-staging";
 
 export async function POST(req: Request) {
-  const publisherEmail = await getPublisherEmail(req);
-  if (!publisherEmail) {
+  const identity = await getPublisherIdentity(req);
+  if (!identity) {
     return Response.json(
       { error: "Publisher sign-in or Bearer token required" },
       { status: 401 }
+    );
+  }
+
+  const verdict = checkSkillPackage({
+    via: identity.via,
+    version: req.headers.get("x-mekari-canvas-skill-version"),
+    breaking: true,
+    hasRetiredReplaceSlug: false,
+  });
+  if (verdict.status === "block") {
+    return Response.json(
+      { error: verdict.error, code: verdict.code },
+      { status: 400 }
     );
   }
 

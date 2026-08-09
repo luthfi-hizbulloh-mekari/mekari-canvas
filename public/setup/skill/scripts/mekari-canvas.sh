@@ -10,8 +10,28 @@ TOKEN_REJECTED=1
 TOKEN_INCONCLUSIVE=2
 CURL_API=(--connect-timeout 10 --max-time 60)
 CURL_UPLOAD=(--connect-timeout 10 --speed-limit 1024 --speed-time 120)
+CURL_AUTH_HEADERS=()
 
 die() { echo "mekari-canvas: $*" >&2; exit 1; }
+
+SKILL_FILE="$(dirname "${BASH_SOURCE[0]}")/../SKILL.md"
+SKILL_PACKAGE_VERSION=$(awk '
+  $0 == "---" { section += 1; if (section > 1) exit; next }
+  section == 1 && /^version:[[:space:]]*/ {
+    sub(/^version:[[:space:]]*/, ""); print; exit
+  }
+' "$SKILL_FILE" 2>/dev/null || true)
+[[ "$SKILL_PACKAGE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+  || die "invalid or missing Skill package version in $SKILL_FILE"
+
+set_curl_auth_headers() {
+  local token="$1"
+  CURL_AUTH_HEADERS=(
+    -H "Authorization: Bearer $token"
+    -H "Content-Type: application/json"
+    -H "X-Mekari-Canvas-Skill-Version: $SKILL_PACKAGE_VERSION"
+  )
+}
 
 is_api_base() {
   [[ "$1" =~ ^https?://[^/?#[:space:]]+$ ]] && return 0
@@ -28,6 +48,7 @@ load_config() {
   API_BASE=$(jq -r '.apiBase // empty' "$CONFIG")
   TOKEN=$(jq -r '.token // empty' "$CONFIG")
   [[ -n "$API_BASE" && -n "$TOKEN" ]] || die "invalid config at $CONFIG"
+  set_curl_auth_headers "$TOKEN"
 }
 
 http() {
@@ -52,18 +73,25 @@ error_message() { # body fallback
      then .error else $fallback end' <<<"$1" 2>/dev/null || printf '%s' "$2"
 }
 
+warn_if_stale() {
+  local warning
+  warning=$(jq -r \
+    'if type == "object" and (.skillPackageWarning | type) == "string"
+     then .skillPackageWarning else empty end' <<<"$1" 2>/dev/null || true)
+  [[ -z "$warning" ]] || echo "mekari-canvas: $warning" >&2
+}
+
 api() {
   local method="$1" path="$2" message
   shift 2
   if ! http "$method" "$API_BASE$path" "${CURL_API[@]}" \
-    -H "Authorization: Bearer $TOKEN" \
-    -H "Content-Type: application/json" \
+    ${CURL_AUTH_HEADERS[@]+"${CURL_AUTH_HEADERS[@]}"} \
     "$@"; then
     die "request failed (HTTP $HTTP_STATUS; $method $path): $HTTP_ERROR"
   fi
   if [[ "$HTTP_STATUS" -lt 200 || "$HTTP_STATUS" -ge 300 ]]; then
     message=$(error_message "$HTTP_BODY" "request failed")
-    die "$message (HTTP $HTTP_STATUS; $method $path)"
+    die "request failed (HTTP $HTTP_STATUS; $method $path): $message"
   fi
   printf '%s' "$HTTP_BODY"
 }
@@ -85,8 +113,7 @@ detect_kind() {
 publish_request() {
   local payload="$1"
   if ! http POST "$API_BASE/api/publish" "${CURL_API[@]}" \
-    -H "Authorization: Bearer $TOKEN" \
-    -H "Content-Type: application/json" \
+    ${CURL_AUTH_HEADERS[@]+"${CURL_AUTH_HEADERS[@]}"} \
     -d "$payload"; then
     die "publish failed (HTTP $HTTP_STATUS; POST /api/publish): $HTTP_ERROR"
   fi
@@ -182,9 +209,9 @@ write_config() {
 
 validate_saved_token() {
   local api_base="$1" token="$2"
+  set_curl_auth_headers "$token"
   if ! http GET "$api_base/api/shares" "${CURL_API[@]}" \
-    -H "Authorization: Bearer $token" \
-    -H "Content-Type: application/json"; then
+    ${CURL_AUTH_HEADERS[@]+"${CURL_AUTH_HEADERS[@]}"}; then
     return "$TOKEN_INCONCLUSIVE"
   fi
   if [[ "$HTTP_STATUS" -ge 200 && "$HTTP_STATUS" -lt 300 ]]; then
@@ -280,7 +307,7 @@ cmd_setup() {
   if [[ "$HTTP_STATUS" -lt 200 || "$HTTP_STATUS" -ge 300 ]]; then
     local message
     message=$(error_message "$response" "setup exchange failed")
-    die "$message (HTTP $HTTP_STATUS)"
+    die "setup exchange failed (HTTP $HTTP_STATUS): $message"
   fi
 
   token=$(jq -r \
@@ -363,8 +390,9 @@ cmd_publish() {
   if [[ "$HTTP_STATUS" -lt 200 || "$HTTP_STATUS" -ge 300 ]]; then
     local message
     message=$(error_message "$HTTP_BODY" "publish failed")
-    die "$message (HTTP $HTTP_STATUS)"
+    die "publish failed (HTTP $HTTP_STATUS): $message"
   fi
+  warn_if_stale "$HTTP_BODY"
 
   slug=$(echo "$HTTP_BODY" | jq -r '.slug // empty')
   [[ -n "$slug" ]] || die "invalid publish response"
@@ -425,8 +453,9 @@ cmd_edit() {
   if [[ "$HTTP_STATUS" -lt 200 || "$HTTP_STATUS" -ge 300 ]]; then
     local message
     message=$(error_message "$HTTP_BODY" "edit failed")
-    die "$message (HTTP $HTTP_STATUS)"
+    die "edit failed (HTTP $HTTP_STATUS): $message"
   fi
+  warn_if_stale "$HTTP_BODY"
 
   published_slug=$(echo "$HTTP_BODY" | jq -r '.slug // empty')
   [[ -n "$published_slug" ]] || die "invalid publish response"
