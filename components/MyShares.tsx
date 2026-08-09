@@ -1,11 +1,12 @@
 "use client";
 
-import { Copy, RefreshCw, Trash2 } from "lucide-react";
+import { Copy, Pencil, Trash2 } from "lucide-react";
 import type { ArtifactKind } from "@/lib/artifact-kind";
 import { formatBytes } from "@/lib/format-bytes";
 
 export type ServerShare = {
   slug: string;
+  title?: string;
   kind: ArtifactKind;
   createdAt: string;
   updatedAt: string;
@@ -19,7 +20,7 @@ type Props = {
   shares: ServerShare[];
   origin: string;
   legacyEditTokens: Record<string, string>;
-  onReplace: (slug: string) => void;
+  onEdit: (share: ServerShare) => void;
   onDelete: (share: ServerShare) => void;
   onCopy: (text: string) => void;
   error?: string;
@@ -29,7 +30,7 @@ export default function MyShares({
   shares,
   origin,
   legacyEditTokens,
-  onReplace,
+  onEdit,
   onDelete,
   onCopy,
   error,
@@ -43,7 +44,7 @@ export default function MyShares({
       {shares.map((s) => (
         <div className="share-row" key={s.slug}>
           <a href={`/s/${s.slug}`} target="_blank" rel="noreferrer">
-            /s/{s.slug}
+            {s.title || `/s/${s.slug}`}
           </a>
           <span className="when">
             {new Date(s.updatedAt || s.createdAt).toLocaleDateString("en-GB", {
@@ -72,11 +73,11 @@ export default function MyShares({
           </button>
           <button
             className="op"
-            title="replace"
-            aria-label={`replace /s/${s.slug}`}
-            onClick={() => onReplace(s.slug)}
+            title="edit"
+            aria-label={`edit ${s.title || `/s/${s.slug}`}`}
+            onClick={() => onEdit(s)}
           >
-            <RefreshCw size={14} />
+            <Pencil size={14} />
           </button>
           <button
             className="op danger"

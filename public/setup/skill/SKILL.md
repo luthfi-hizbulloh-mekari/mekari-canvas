@@ -3,7 +3,7 @@ name: mekari-canvas
 description: >-
   Publish and manage Mekari Canvas Shares (HTML, Markdown, or Playwright Trace Artifacts) via the
   Agent API. Use when the user invokes /mekari-canvas, wants to publish a
-  handoff doc, list Shares, replace, or delete. Supports shared Publisher API token setup and reuse.
+  handoff doc, list Shares, edit, or delete. Supports shared Publisher API token setup and reuse.
 ---
 
 # Mekari Canvas
@@ -14,7 +14,7 @@ Agent publish for [Mekari Canvas](https://mekari-canvas.vercel.app) — Short li
 
 - User says `/mekari-canvas publish` on an attached `.md`, `.html`, or Playwright trace `.zip`
 - User wants a Short link for a handoff doc without opening the website
-- User asks to list, replace, or delete their Canvas Shares
+- User asks to list, edit, or delete their Canvas Shares
 
 ## Setup and refresh
 
@@ -42,9 +42,9 @@ Resolve the path relative to this installed Skill directory.
 
 | Intent | Command |
 |--------|---------|
-| Publish file (auto-Replace if path known) | `publish <absolute-path>` |
-| Force new Share | `publish --new <absolute-path>` |
-| Replace specific slug | `replace <absolute-path> <slug>` or `publish --replace <slug> <path>` |
+| Publish file (auto-Edit if path known) | `publish --title <title> <absolute-path>` |
+| Force new Share | `publish --new --title <title> <absolute-path>` |
+| Edit Title and/or Artifact | `edit <slug> [--title <title>] [<absolute-path>]` |
 | List Shares | `list` |
 | Delete Share | `delete <slug>` |
 | Validate/re-run shared token setup | `setup <code>` |
@@ -55,30 +55,32 @@ All authenticated calls use `Authorization: Bearer <token>` from `~/.canvas/conf
 
 | Method | Path | Body |
 |--------|------|------|
-| POST | `/api/publish` | `{ content, kind: "html"\|"md", replaceSlug? }` |
+| POST | `/api/publish` | `{ content, kind: "html"\|"md", title?, editSlug? }` |
 | POST | `/api/trace-uploads` | —; returns `{ uploadId, uploadUrl }` |
 | PUT | returned `uploadUrl` | raw ZIP bytes with `Content-Type: application/zip` |
-| POST | `/api/publish` | `{ kind: "trace", uploadId, replaceSlug? }` |
+| POST | `/api/publish` | `{ kind: "trace", uploadId, title?, editSlug? }` |
+| POST | `/api/publish` | `{ editSlug, title }` for Title-only Edit |
 | GET | `/api/shares` | — |
 | DELETE | `/api/shares/:slug` | — |
 
-Response includes `slug` — Short link is `{apiBase}/s/{slug}`.
+Response includes `slug` and optional `title` — Short link is `{apiBase}/s/{slug}`.
 
-Trace publishing is always three steps: mint an upload URL, PUT the ZIP bytes directly, then commit with `uploadId`. Each staged upload is immutable and once-only; mint a fresh upload URL before retrying a failed commit. Never put trace bytes in JSON or base64. Final validated traces smaller than exactly 1,000,000 bytes have no automatic expiration; traces at or above 1,000,000 bytes expire 168 hours after a successful publish commit. On Replace, the same size class preserves any existing expiration, large → small clears it, and small → large sets a new seven-day deadline from replacement commit.
+Trace publishing is always three steps: mint an upload URL, PUT the ZIP bytes directly, then commit with `uploadId`. Each staged upload is immutable and once-only; mint a fresh upload URL before retrying a failed commit. Send trace bytes as the raw PUT body. Final validated traces smaller than exactly 1,000,000 bytes have no automatic expiration; traces at or above 1,000,000 bytes expire 168 hours after a successful publish commit. On Edit, the same size class preserves any existing expiration, large → small clears it, and small → large sets a new seven-day deadline from the Artifact overwrite commit.
 
 ## Publish manifest
 
-Maintain `~/.canvas/publish-manifest.json` mapping **absolute file path → slug** so re-publishing the same file auto-Replaces instead of creating duplicates. The script updates this automatically.
+Maintain `~/.canvas/publish-manifest.json` mapping **absolute file path → slug** so re-publishing the same Artifact auto-Edits the Share instead of creating duplicates. The script updates this automatically. When an auto-Edit omits `--title`, preserve the existing Title.
 
 ## Rules
 
-- **Artifact kind** is immutable on Replace (`.md` → `md`, `.html` → `html`, trace `.zip` → `trace`).
+- Before creating a Share, derive and supply a **Title** from the Artifact purpose: about 3–8 words and under 120 characters (for example, `PR #412 handoff` or `checkout flake trace`). A publish is complete when the command returns the Short link.
+- **Artifact kind** is immutable on Edit (`.md` → `md`, `.html` → `html`, trace `.zip` → `trace`).
 - `.zip` is accepted only when Canvas recognizes Playwright trace structure; arbitrary ZIPs are rejected.
-- **Published by** is set at create from the token owner — cannot change on Replace.
-- If auto-Replace gets 404 because a trace expired and was swept, remove the path mapping and retry as a new Share. The bundled script does this automatically.
+- **Published by** is set at create from the token owner and remains unchanged on Edit.
+- If an Artifact-backed auto-Edit gets 404 because a trace expired and was swept, remove the path mapping and retry as a new Share. A Title-only Edit returns the server error.
 - Return the Short link to the user after publish.
 - Legacy Shares without **Published by** are not manageable via Agent API.
 
 ## Freeform intent
 
-When the user attaches a handoff `.md` or Playwright trace `.zip` and says "publish this to canvas" without a subcommand, run `publish` on the attached file path.
+When the user attaches a handoff `.md` or Playwright trace `.zip` and says "publish this to canvas" without a subcommand, derive its Title and run `publish --title <title>` on the attached Artifact path.

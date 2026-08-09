@@ -338,6 +338,7 @@ describe("mekari-canvas publish helper", () => {
             shares: [
               {
                 slug: "release-notes",
+                title: "Release-notes",
                 kind: "md",
                 updatedAt: "2026-08-10",
                 expiresAt: null,
@@ -353,6 +354,7 @@ describe("mekari-canvas publish helper", () => {
 
         expect(result.stdout.trim().split(/\s+/)).toEqual([
           "release-notes",
+          "Release-notes",
           "md",
           "2026-08-10",
           "permanent",
@@ -445,7 +447,83 @@ describe("mekari-canvas publish helper", () => {
     );
   });
 
-  it("re-stages an expired trace replacement before retrying without replaceSlug", async () => {
+  it("sends Title-only Edit without an Artifact", async () => {
+    const commits: Array<Record<string, unknown>> = [];
+    await withServer(
+      (request, response) => {
+        expect(request.url).toBe("/api/publish");
+        readRequestBody(request, (body) => {
+          commits.push(JSON.parse(body));
+          response.writeHead(200, { "content-type": "application/json" });
+          response.end('{"slug":"abc12345","title":"PR #412 handoff"}');
+        });
+      },
+      async (baseUrl) => {
+        const home = await makeHome({ apiBase: baseUrl, token: "test-token" });
+
+        const result = await runCanvas(
+          home,
+          "edit",
+          "abc12345",
+          "--title",
+          "PR #412 handoff"
+        );
+
+        expect(result.stdout).toContain(`${baseUrl}/s/abc12345`);
+        expect(commits).toEqual([{ editSlug: "abc12345", title: "PR #412 handoff" }]);
+      }
+    );
+  });
+
+  it("does not retry a missing Title-only Edit as create", async () => {
+    let commits = 0;
+    await withServer(
+      (request, response) => {
+        expect(request.url).toBe("/api/publish");
+        readRequestBody(request, () => {
+          commits += 1;
+          response.writeHead(404, { "content-type": "application/json" });
+          response.end('{"error":"Share not found","code":"share_not_found"}');
+        });
+      },
+      async (baseUrl) => {
+        const home = await makeHome({ apiBase: baseUrl, token: "test-token" });
+
+        await expect(
+          runCanvas(home, "edit", "missing", "--title", "New Title")
+        ).rejects.toMatchObject({ stderr: expect.stringContaining("Share not found") });
+        expect(commits).toBe(1);
+      }
+    );
+  });
+
+  it("does not retry a missing explicit Artifact Edit as create", async () => {
+    const commits: Array<Record<string, unknown>> = [];
+    await withServer(
+      (request, response) => {
+        expect(request.url).toBe("/api/publish");
+        readRequestBody(request, (body) => {
+          commits.push(JSON.parse(body));
+          response.writeHead(404, { "content-type": "application/json" });
+          response.end('{"error":"Share not found","code":"share_not_found"}');
+        });
+      },
+      async (baseUrl) => {
+        const home = await makeHome({ apiBase: baseUrl, token: "test-token" });
+        const file = path.join(home, "share.md");
+        await writeFile(file, "# Share\n");
+
+        await expect(runCanvas(home, "edit", "missing", file)).rejects.toMatchObject({
+          stderr: expect.stringContaining("Share not found"),
+        });
+        expect(commits).toEqual([
+          { kind: "md", content: "# Share", editSlug: "missing" },
+        ]);
+      }
+    );
+  });
+
+  it("re-stages an expired trace auto-Edit before retrying without editSlug", async () => {
     let mintCalls = 0;
     const commits: Array<Record<string, unknown>> = [];
     await withServer(
@@ -474,7 +552,7 @@ describe("mekari-canvas publish helper", () => {
               response.end('{"error":"missing","code":"share_not_found"}');
             } else {
               response.writeHead(200, { "content-type": "application/json" });
-              response.end('{"slug":"replacement"}');
+              response.end('{"slug":"edited-share"}');
             }
           });
           return;
@@ -492,10 +570,10 @@ describe("mekari-canvas publish helper", () => {
 
         const result = await runCanvas(home, "publish", file);
 
-        expect(result.stdout).toContain(`${baseUrl}/s/replacement`);
+        expect(result.stdout).toContain(`${baseUrl}/s/edited-share`);
         expect(mintCalls).toBe(2);
         expect(commits).toEqual([
-          { kind: "trace", uploadId: "upload-1", replaceSlug: "expired-share" },
+          { kind: "trace", uploadId: "upload-1", editSlug: "expired-share" },
           { kind: "trace", uploadId: "upload-2" },
         ]);
       }

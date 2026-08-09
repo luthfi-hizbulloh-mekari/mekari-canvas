@@ -79,4 +79,31 @@ describe.sequential("LocalDriver compatibility", () => {
     expect(await storage.stagedTraceSize(uploadId)).toBe(first.length);
     expect(await storage.readStagedTraceRange(uploadId, 0, first.length - 1)).toEqual(first);
   });
+
+  it("writes Title metadata without moving or rewriting the Artifact", async () => {
+    const { getStorage } = await import("@/lib/storage");
+    const storage = getStorage();
+    const body = Uint8Array.from([1, 2, 3, 4]);
+    const meta = {
+      slug: "abc12345",
+      kind: "trace" as const,
+      editTokenHash: "existing-hash",
+      createdAt: "2026-08-05T00:00:00.000Z",
+      updatedAt: "2026-08-05T00:00:00.000Z",
+      size: body.length,
+      publishedBy: "publisher@mekari.com",
+      expiresAt: "2026-08-12T00:00:00.000Z",
+    };
+    await storage.put(meta, body);
+    const before = await storage.getMeta(meta.slug);
+
+    await storage.putMeta({ ...before!, title: "checkout flake trace" });
+
+    const after = await storage.getMeta(meta.slug);
+    expect(after).toEqual({ ...before, title: "checkout flake trace" });
+    expect(after?.blobPath).toBe(before?.blobPath);
+    expect(after?.expiresAt).toBe(before?.expiresAt);
+    const artifact = await storage.open(after!);
+    await expect(new Response(artifact).arrayBuffer()).resolves.toEqual(body.buffer);
+  });
 });

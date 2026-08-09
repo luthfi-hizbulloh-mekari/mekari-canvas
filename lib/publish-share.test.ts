@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   deleteStagedTrace: vi.fn(),
   inspectStagedTrace: vi.fn(),
   commitStagedTrace: vi.fn(),
+  putMeta: vi.fn(),
 }));
 
 vi.mock("@/lib/share-authz", () => ({
@@ -19,6 +20,7 @@ vi.mock("@/lib/storage", () => ({
   getStorage: () => ({
     deleteStagedTrace: mocks.deleteStagedTrace,
     commitStagedTrace: mocks.commitStagedTrace,
+    putMeta: mocks.putMeta,
   }),
 }));
 vi.mock("@/lib/trace-staging", () => ({
@@ -28,10 +30,11 @@ vi.mock("@/lib/trace-staging", () => ({
 
 import { publishShare } from "@/lib/publish-share";
 
-const traceRequest = {
+const traceArtifact = {
   kind: "trace" as const,
   uploadId: "123456789012345678901",
 };
+const traceRequest = { mode: "create" as const, artifact: traceArtifact };
 const publisherEmail = "publisher@mekari.com";
 const now = "2026-08-05T00:00:00.000Z";
 
@@ -59,13 +62,14 @@ describe("publishShare trace retention", () => {
     vi.resetAllMocks();
     mocks.deleteStagedTrace.mockResolvedValue(undefined);
     mocks.commitStagedTrace.mockResolvedValue(undefined);
+    mocks.putMeta.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  it("authorizes Replace before reading staged metadata and still cleans up", async () => {
+  it("authorizes Edit before reading staged metadata and still cleans up", async () => {
     mocks.authorizeShareMutation.mockResolvedValue({
       ok: false,
       status: 403,
@@ -74,13 +78,13 @@ describe("publishShare trace retention", () => {
 
     await expect(
       publishShare(
-        { ...traceRequest, replaceSlug: "abc12345" },
+        { mode: "edit", slug: "abc12345", artifact: traceArtifact },
         publisherEmail
       )
     ).rejects.toMatchObject({ status: 403 });
 
     expect(mocks.inspectStagedTrace).not.toHaveBeenCalled();
-    expect(mocks.deleteStagedTrace).toHaveBeenCalledWith(traceRequest.uploadId);
+    expect(mocks.deleteStagedTrace).toHaveBeenCalledWith(traceArtifact.uploadId);
   });
 
   it("uses the same cleanup path after validation fails", async () => {
@@ -97,12 +101,17 @@ describe("publishShare trace retention", () => {
     expect(mocks.commitStagedTrace).not.toHaveBeenCalled();
   });
 
-  it("commits a new small trace without an expiresAt key", async () => {
+  it("commits a new small trace with Title and without an expiresAt key", async () => {
     mocks.inspectStagedTrace.mockResolvedValue(TRACE_RETENTION_THRESHOLD_BYTES - 1);
 
-    const result = await publishShare(traceRequest, publisherEmail);
+    const result = await publishShare(
+      { ...traceRequest, title: "checkout flake trace" },
+      publisherEmail
+    );
 
     expect(result.expiresAt).toBeNull();
+    expect(result.title).toBe("checkout flake trace");
+    expect(committedMeta().title).toBe("checkout flake trace");
     expect(committedMeta()).not.toHaveProperty("expiresAt");
   });
 
@@ -116,7 +125,7 @@ describe("publishShare trace retention", () => {
     expect(committedMeta().expiresAt).toBe(expiresAt);
   });
 
-  it("preserves a legacy deadline on a same-class small replacement", async () => {
+  it("preserves a legacy deadline on a same-class small Edit", async () => {
     const legacyDeadline = "2026-08-31T00:00:00.000Z";
     mocks.authorizeShareMutation.mockResolvedValue({
       ok: true,
@@ -124,12 +133,15 @@ describe("publishShare trace retention", () => {
     });
     mocks.inspectStagedTrace.mockResolvedValue(TRACE_RETENTION_THRESHOLD_BYTES - 2);
 
-    await publishShare({ ...traceRequest, replaceSlug: "abc12345" }, publisherEmail);
+    await publishShare(
+      { mode: "edit", slug: "abc12345", artifact: traceArtifact },
+      publisherEmail
+    );
 
     expect(committedMeta().expiresAt).toBe(legacyDeadline);
   });
 
-  it("clears expiration and the stored key on a large-to-small replacement", async () => {
+  it("clears expiration and the stored key on a large-to-small Edit", async () => {
     mocks.authorizeShareMutation.mockResolvedValue({
       ok: true,
       meta: previous({
@@ -140,7 +152,7 @@ describe("publishShare trace retention", () => {
     mocks.inspectStagedTrace.mockResolvedValue(TRACE_RETENTION_THRESHOLD_BYTES - 1);
 
     const result = await publishShare(
-      { ...traceRequest, replaceSlug: "abc12345" },
+      { mode: "edit", slug: "abc12345", artifact: traceArtifact },
       publisherEmail
     );
 
@@ -148,11 +160,14 @@ describe("publishShare trace retention", () => {
     expect(committedMeta()).not.toHaveProperty("expiresAt");
   });
 
-  it("sets seven days from replacement commit on a small-to-large replacement", async () => {
+  it("sets seven days from the overwrite commit on a small-to-large Edit", async () => {
     mocks.authorizeShareMutation.mockResolvedValue({ ok: true, meta: previous() });
     mocks.inspectStagedTrace.mockResolvedValue(TRACE_RETENTION_THRESHOLD_BYTES);
 
-    await publishShare({ ...traceRequest, replaceSlug: "abc12345" }, publisherEmail);
+    await publishShare(
+      { mode: "edit", slug: "abc12345", artifact: traceArtifact },
+      publisherEmail
+    );
 
     expect(committedMeta().expiresAt).toBe(
       new Date(Date.parse(now) + TRACE_RETENTION_DURATION_MS).toISOString()
@@ -167,11 +182,87 @@ describe("publishShare trace retention", () => {
     });
 
     await expect(
-      publishShare({ ...traceRequest, replaceSlug: "abc12345" }, publisherEmail)
+      publishShare(
+        { mode: "edit", slug: "abc12345", artifact: traceArtifact },
+        publisherEmail
+      )
     ).rejects.toMatchObject({ status: 422, code: "invalid_share_metadata" });
 
     expect(mocks.inspectStagedTrace).not.toHaveBeenCalled();
     expect(mocks.commitStagedTrace).not.toHaveBeenCalled();
-    expect(mocks.deleteStagedTrace).toHaveBeenCalledWith(traceRequest.uploadId);
+    expect(mocks.deleteStagedTrace).toHaveBeenCalledWith(traceArtifact.uploadId);
+  });
+
+  it.each([
+    [undefined, "Existing Title"],
+    [null, undefined],
+    ["New Title", "New Title"],
+  ] as const)("applies the Title tri-state while overwriting an Artifact", async (title, expected) => {
+    mocks.authorizeShareMutation.mockResolvedValue({
+      ok: true,
+      meta: previous({ title: "Existing Title" }),
+    });
+    mocks.inspectStagedTrace.mockResolvedValue(TRACE_RETENTION_THRESHOLD_BYTES - 1);
+
+    await publishShare(
+      {
+        mode: "edit",
+        slug: "abc12345",
+        artifact: traceArtifact,
+        ...(title === undefined ? {} : { title }),
+      },
+      publisherEmail
+    );
+
+    expect(committedMeta().title).toBe(expected);
+  });
+
+  it.each([
+    [undefined, "Existing Title"],
+    [null, undefined],
+    ["New Title", "New Title"],
+  ] as const)("applies the Title tri-state without touching the Artifact", async (title, expected) => {
+    const existing = previous({
+      title: "Existing Title",
+      blobPath: "abc12345/old.zip",
+      expiresAt: "2026-08-31T00:00:00.000Z",
+    });
+    mocks.authorizeShareMutation.mockResolvedValue({ ok: true, meta: existing });
+
+    const result = await publishShare(
+      {
+        mode: "edit",
+        slug: "abc12345",
+        ...(title === undefined ? {} : { title }),
+      },
+      publisherEmail
+    );
+
+    expect(result).toMatchObject({ edited: true, title: expected });
+    const stored = mocks.putMeta.mock.calls[0][0] as ShareMeta;
+    expect(stored.title).toBe(expected);
+    expect({ ...stored, title: undefined }).toEqual({ ...existing, title: undefined });
+    expect(mocks.inspectStagedTrace).not.toHaveBeenCalled();
+    expect(mocks.commitStagedTrace).not.toHaveBeenCalled();
+    expect(mocks.deleteStagedTrace).not.toHaveBeenCalled();
+  });
+
+  it("does not validate stored trace size during a Title-only Edit", async () => {
+    const existing = previous({
+      title: "Old Title",
+      size: Number.NaN,
+      expiresAt: "2026-08-31T00:00:00.000Z",
+    });
+    mocks.authorizeShareMutation.mockResolvedValue({ ok: true, meta: existing });
+
+    await expect(
+      publishShare(
+        { mode: "edit", slug: "abc12345", title: "New Title" },
+        publisherEmail
+      )
+    ).resolves.toMatchObject({ title: "New Title" });
+
+    expect(mocks.putMeta).toHaveBeenCalledWith({ ...existing, title: "New Title" });
+    expect(mocks.inspectStagedTrace).not.toHaveBeenCalled();
   });
 });

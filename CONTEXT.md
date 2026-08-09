@@ -25,7 +25,7 @@ A Playwright-generated trace ZIP intended for interactive inspection in Playwrig
 _Avoid_: ZIP file, archive, attachment
 
 **Artifact kind**:
-Whether a Share holds an **HTML Artifact**, **Markdown Artifact**, or **Playwright Trace Artifact** — stored as `html`, `md`, or `trace`. Set at first publish — detected by file extension on upload (`.html`/`.htm` → `html`, `.md` → `md`, `.zip` → candidate `trace`) or by content sniff on paste for text artifacts; a ZIP becomes a Trace Artifact only after trace-structure validation. Immutable on **Replace** — cannot overwrite one kind with another. Shares created before Markdown support may lack kind in storage — treat missing kind as `html`.
+Whether a Share holds an **HTML Artifact**, **Markdown Artifact**, or **Playwright Trace Artifact** — stored as `html`, `md`, or `trace`. Set at first publish — detected by file extension on upload (`.html`/`.htm` → `html`, `.md` → `md`, `.zip` → candidate `trace`) or by content sniff on paste for text artifacts; a ZIP becomes a Trace Artifact only after trace-structure validation. Immutable on **Edit** when the Artifact is overwritten — cannot overwrite one kind with another. Shares created before Markdown support may lack kind in storage — treat missing kind as `html`.
 _Avoid_: Format, type, mime
 
 **Short link**:
@@ -36,6 +36,10 @@ _Avoid_: Link, URL, permalink
 The 8-character random identifier in a Short link. Generated via nanoid — unguessable, URL-safe.
 _Avoid_: ID, code, hash
 
+**Title**:
+Optional human-facing label for a Share. Not unique across Shares. Identity remains the **Slug**; Title is for Publishers and agents. Visible in publisher surfaces (**My Shares**, publish/**Edit** UI, **Agent API**) — not on the public Short link. Trimmed; blank/whitespace is stored as absent; max length 120 characters; Unicode allowed. In **My Shares**, when set, Title is the row's primary label (clickable to the Short link) in place of `/s/{slug}` and the Short link is not shown again as text; when absent, the primary label falls back to `/s/{slug}`. Copy still copies the full Short link. Browser create leaves the Title field blank (no filename default). May be omitted in storage/API; the **Skill package** instructs agents to supply one on publish. On **Edit**, omitted `title` leaves the existing Title unchanged; empty/whitespace clears it; a non-empty value sets it. Clearable on **Edit**.
+_Avoid_: Name, link title, label
+
 **Raw trace endpoint**:
 The non-canonical, public `/s/{slug}/trace` URL for a Playwright Trace Artifact that returns the stored ZIP to Trace Viewer while the underlying Blob remains private. It is CORS-enabled for the external viewer, supports the viewer's remote-trace fetch, and is not the Share link people are expected to copy; anyone holding the Share link can still fetch or download the raw bytes.
 _Avoid_: Download link, ZIP link, asset URL
@@ -45,7 +49,7 @@ An optional deadline on a Playwright Trace Share. When present, it is shown to P
 _Avoid_: TTL, timeout, archive policy
 
 **Trace retention policy**:
-The size-based rule applied to the final validated compressed Playwright Trace Artifact size at publish commit. Traces smaller than exactly 1,000,000 bytes have no automatic expiration; traces at or above 1,000,000 bytes expire 168 hours after a successful publish commit. On Replace, same-class traces preserve any existing Trace expiration verbatim, large → small clears it, and small → large sets a new seven-day deadline from replacement commit.
+The size-based rule applied to the final validated compressed Playwright Trace Artifact size at publish commit. Traces smaller than exactly 1,000,000 bytes have no automatic expiration; traces at or above 1,000,000 bytes expire 168 hours after a successful publish commit. On **Edit** that overwrites the Artifact, same-class traces preserve any existing Trace expiration verbatim, large → small clears it, and small → large sets a new seven-day deadline from the Artifact overwrite commit.
 _Avoid_: Approximate 1 MB cutoff, ZIP lifetime
 
 **Trace structure validation**:
@@ -61,31 +65,31 @@ A Mekari employee who has completed **Publisher sign-in** with a `@mekari.com` G
 _Avoid_: User, member, employee (too broad)
 
 **Published by**:
-The Publisher's Google email, captured at Share create and stored in KV **Share** metadata. Immutable on **Replace**. Shown in **My Shares** only — not exposed on the public Short link.
+The Publisher's Google email, captured at Share create and stored in KV **Share** metadata. Immutable on **Edit**. Shown in **My Shares** only — not exposed on the public Short link.
 _Avoid_: Author, owner, creator
 
 **Blob store**:
-Vercel Blob holds Artifact payloads (HTML, Markdown, and Playwright trace ZIPs). A separate lightweight index (Vercel KV) maps slug → blob path, **Artifact kind**, and metadata.
+Vercel Blob holds Artifact payloads (HTML, Markdown, and Playwright trace ZIPs). A separate lightweight index (Vercel KV) maps slug → blob path, **Artifact kind**, **Title**, and metadata.
 _Avoid_: Database, S3, filesystem
 
-**Replace**:
-Overwriting an existing Share's Artifact in place — the Short link stays the same. Optional field on publish: paste an existing Short link to target. For Playwright Trace Artifacts, a same-class replacement preserves its existing Trace expiration, large → small clears it, and small → large sets a new seven-day deadline from replacement commit.
-_Avoid_: Edit, update, revise
+**Edit**:
+Mutating an existing Share in place — **Title** and/or Artifact — without changing the Short link. In the browser, **Edit** is entered from **My Shares** (pencil): arms the homepage publish panel with Title prefilled and CTA **save**; there is no free-typed slug/Short-link target field. Dropping/pasting a new Artifact is optional — Title-only save is allowed. Title-only Edit leaves the Artifact untouched. Over the **Agent API**, create and Edit share `POST /api/publish`: Edit targets via `editSlug` only (no `replaceSlug` alias); Artifact payload optional when editing; `title` follows omit/keep, empty/clear, value/set. When the Artifact is overwritten, **Artifact kind** stays immutable; for Playwright Trace Artifacts, same-class overwrite preserves Trace expiration, large → small clears it, and small → large sets a new seven-day deadline from the overwrite commit. Publish-manifest auto-Edit preserves Title when `title` is omitted.
+_Avoid_: Replace, update, revise
 
 **Delete**:
-Removing a Share entirely — its Short link returns 404. Same authorization as **Replace**.
+Removing a Share entirely — its Short link returns 404. Same authorization as **Edit**.
 _Avoid_: Remove, unpublish, archive
 
 **My Shares**:
-The list of Shares published by the signed-in **Publisher**, fetched from the server (**Agent API** list). Each row shows slug, **Artifact kind** (`html`, `md`, or `trace`), and **Published by**; Playwright Trace rows also show their size and show an expiration date only when one exists. Clicking one prefills the Replace field for quick overwrite. Only visible after **Publisher sign-in**.
+The list of Shares published by the signed-in **Publisher**, fetched from the server (**Agent API** list). Each row's primary label is the Share's **Title** when set, otherwise `/s/{slug}`; that label links to the Short link. The Short link is not shown again as separate text when Title is present. Meta shows **Artifact kind** (`html`, `md`, or `trace`); Playwright Trace rows also show their size and show an expiration date only when one exists. Actions: copy Short link, **Edit** (pencil) arms the homepage publish panel for that Share, Delete. Only visible after **Publisher sign-in**.
 _Avoid_: History, dashboard, library
 
 **Browser edit token**:
-Legacy per-Share secret stored in the publisher's browser (`localStorage`) at create time. No longer required for **Replace** or **Delete** when **Published by** matches the signed-in **Publisher** — kept only for grandfathering legacy Shares without **Published by**.
+Legacy per-Share secret stored in the publisher's browser (`localStorage`) at create time. No longer required for **Edit** or **Delete** when **Published by** matches the signed-in **Publisher** — kept only for grandfathering legacy Shares without **Published by**.
 _Avoid_: Edit token, cookie, session
 
 **Publisher API token**:
-Long-lived secret tied to one **Publisher** (`@mekari.com` email). Sent as `Authorization: Bearer` for **Agent publish** — create, Replace, Delete, and list Shares without browser paste/upload. One token is stored per global machine setup and shared by its supported **Agent surfaces**; a valid token is reused, while missing or rejected credentials are replaced. Revocable from the homepage.
+Long-lived secret tied to one **Publisher** (`@mekari.com` email). Sent as `Authorization: Bearer` for **Agent publish** — create, Edit, Delete, and list Shares without browser paste/upload. One token is stored per global machine setup and shared by its supported **Agent surfaces**; a valid token is reused, while missing or rejected credentials are replaced. Revocable from the homepage.
 _Avoid_: API key, PAT, access token
 
 **Setup code**:
@@ -113,7 +117,7 @@ Creating or mutating any supported Share Artifact via the **Agent API** using a 
 _Avoid_: MCP publish, CLI upload, programmatic upload
 
 **Agent API**:
-Harness-agnostic HTTP endpoints for Share create, Replace, Delete, and list — authenticated by **Publisher API token**. Same storage and Short links as browser publish; HTML/Markdown use text payloads and Playwright Trace Artifacts use binary file uploads. Consumers are the **`/mekari-canvas`** Skill package on Cursor, Claude Code, and Codex CLI.
+Harness-agnostic HTTP endpoints for Share create, Edit, Delete, and list — authenticated by **Publisher API token**. Same storage and Short links as browser publish; HTML/Markdown use text payloads and Playwright Trace Artifacts use binary file uploads. Consumers are the **`/mekari-canvas`** Skill package on Cursor, Claude Code, and Codex CLI.
 _Avoid_: MCP server, SDK, integration
 
 **Add skill**:
@@ -125,7 +129,7 @@ A local coding-agent client that can receive the Add skill setup prompt and use 
 _Avoid_: Harness, AI app, integration
 
 **Mekari Canvas skill**:
-The installed **Skill package** entry point for **Agent publish** — invoked as **`/mekari-canvas`**. Supports explicit subcommands (`publish`, `list`, `delete`, `replace`, `setup`) or freeform intent when context is clear (e.g. attached handoff file or Playwright trace ZIP). Installed globally through the **Skills CLI** so it works from any repo.
+The installed **Skill package** entry point for **Agent publish** — invoked as **`/mekari-canvas`**. Supports explicit subcommands (`publish`, `list`, `delete`, `edit`, `setup`) or freeform intent when context is clear (e.g. attached handoff file or Playwright trace ZIP). Instructs agents to supply a **Title** on publish (`title` / `--title`) — a short descriptive phrase (about 3–8 words) from the Artifact's purpose, under 120 characters. Agent `list` columns: `slug, title, kind, updatedAt, …` (empty Title when absent). Installed globally through the **Skills CLI** so it works from any repo.
 _Avoid_: Canvas skill, publish skill, MCP tool
 
 **Skills CLI**:
@@ -135,23 +139,25 @@ _Avoid_: skills.sh registry, harness installer, Canvas installer
 ## Relationships
 
 - One **Share** has exactly one **Artifact** — HTML, Markdown, or Playwright trace
+- One **Share** has at most one **Title**
 - One **Short link** maps to exactly one **Share**
 - **Viewing** a Share requires only the Short link (unguessable slug) — no login
 - **Publishing** a Share requires **Publisher sign-in** before any paste or upload on the homepage; create sets **Published by** from the session email
-- Both homepage publishing and **Agent publish** can create or Replace HTML, Markdown, and Playwright Trace Artifacts
+- Both homepage publishing and **Agent publish** can create or Edit HTML, Markdown, and Playwright Trace Artifacts and set **Title**
 - Playwright Trace Artifact uploads use a binary file contract; an upload is not a base64- or JSON-encoded text Artifact
-- **Replace** keeps the same Short link; absent Replace target, publish creates a new Share
-- **Replace** requires **Publisher sign-in** or **Publisher API token**; session or token identity must match **Published by**; **Published by** unchanged on Replace
-- An active Playwright Trace **Share** keeps its original **Trace expiration** on same-class Replace; large → small clears it, while small → large sets a new seven-day deadline; after expiration and sweeping, its Short link and raw endpoint return 404 and a new Share is required
+- **Edit** keeps the same Short link; absent Edit target, publish creates a new Share
+- **Edit** may change **Title** alone, Artifact alone, or both; Title-only Edit does not touch the Artifact
+- **Edit** requires **Publisher sign-in** or **Publisher API token**; session or token identity must match **Published by**; **Published by** unchanged on Edit
+- An active Playwright Trace **Share** keeps its original **Trace expiration** on same-class Artifact overwrite; large → small clears it, while small → large sets a new seven-day deadline; after expiration and sweeping, its Short link and raw endpoint return 404 and a new Share is required
 - A candidate ZIP must pass **Trace structure validation** before it becomes a Playwright Trace Artifact
 - **Trace expiration** is visible in **My Shares** only when present and is included as an ISO date or explicit `null` in trace publish/list responses
 - **Trace expiration** is enforced at request time and finalized by a daily cleanup sweep
-- **Delete** requires the same authorization as **Replace**
+- **Delete** requires the same authorization as **Edit**
 - HTML and Markdown **Shares** are served raw at their Short links — HTML Artifacts as `text/html`, Markdown Artifacts as `text/markdown`; no iframe wrapper
 - A Playwright Trace **Share** redirects from its Short link to Playwright Trace Viewer; Trace Viewer fetches the ZIP from the Share's **Raw trace endpoint**
 - The **Raw trace endpoint** is public and CORS-enabled for Playwright Trace Viewer, while its underlying Blob storage is private
 - The trace redirect is a convenience boundary, not download prevention; link-holders can fetch the **Raw trace endpoint**
-- **Agent publish** Replace and Delete require **Publisher API token** + matching **Published by**
+- **Agent publish** Edit and Delete require **Publisher API token** + matching **Published by**
 - **Setup code** exchanges once for the global setup's **Publisher API token** through the selected launch **Agent surface**; revocable from the homepage independently of **Publisher sign-in**
 - **Add skill** requires **Publisher sign-in**; the resulting token enables **Agent publish** from all supported **Agent surfaces** after the global setup completes
 - **Setup manifest** is public; **Setup code** is single-use and minted per click — token only via exchange, never embedded in the manifest
@@ -167,18 +173,18 @@ _Avoid_: skills.sh registry, harness installer, Canvas installer
 > **Domain expert:** "Immediately. No draft state. Paste or drag `.html` file → upload → **Short link** returned."
 >
 > **Dev:** "Typo after posting to Slack — new link?"
-> **Domain expert:** "No. Same **Publisher** — paste **Short link** in Replace field, re-upload. Or **`/mekari-canvas publish`** again on the same file."
+> **Domain expert:** "No. Same **Publisher** — **Edit** the Share, re-upload Artifact. Or **`/mekari-canvas publish`** again on the same file."
 >
 > **Dev:** "Agent needs PR summary as markdown — render it?"
 > **Domain expert:** "No. Store raw `.md`, serve `text/markdown`. Ugly in browser is fine — agents fetch the body, not humans."
 >
 > **Dev:** "Handoff done — agent publish without opening the site?"
-> **Domain expert:** "Yes. **Add skill** once → **Publisher API token** stored locally → **`/mekari-canvas publish`** on the handoff file → **Short link** returned. **Replace** same slug when the doc changes."
+> **Domain expert:** "Yes. **Add skill** once → **Publisher API token** stored locally → **`/mekari-canvas publish`** on the handoff file with a **Title** → **Short link** returned. **Edit** same slug when the doc or Title changes."
 
 ## Flagged ambiguities
 
 - "org-only" means link discipline + unguessable slugs, not network isolation — resolved for v1.
-- Replace authorization: **Publisher sign-in** or **Publisher API token**; identity must match **Published by** — resolved with **Agent publish**.
+- Edit authorization: **Publisher sign-in** or **Publisher API token**; identity must match **Published by** — resolved with **Agent publish**.
 - **Organization code** (shared secret via `x-upload-gate`) superseded by **Publisher sign-in** — remove after Google OAuth ships.
-- Legacy Shares (no **Published by** in KV): **Replace** and **Delete** still require valid **Browser edit token** — grandfather only; new publishes always set **Published by**.
+- Legacy Shares (no **Published by** in KV): **Edit** and **Delete** still require valid **Browser edit token** — grandfather only; new publishes always set **Published by**.
 - **Browser edit token** deprecated for new Shares — may still be returned on browser create short term but server ignores when **Published by** matches.

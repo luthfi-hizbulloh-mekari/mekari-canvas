@@ -1,14 +1,17 @@
 import type { Draft } from "@/lib/draft";
+import type { ArtifactKind } from "@/lib/artifact-kind";
 
 export type PublishDraftOptions = {
-  replaceSlug?: string;
+  editSlug?: string;
   editToken?: string;
+  title?: string;
 };
 
 export type PublishedShare = {
   slug: string;
-  kind: Draft["kind"];
-  replaced: boolean;
+  kind: ArtifactKind;
+  edited: boolean;
+  title?: string;
   shortLink: string;
   expiresAt?: string | null;
   editToken?: string;
@@ -27,16 +30,19 @@ async function requireOk(response: Response, fallback: string) {
 }
 
 export async function publishDraft(
-  draft: Draft,
+  draft: Draft | null,
   options: PublishDraftOptions
 ): Promise<PublishedShare> {
   const common = {
-    replaceSlug: options.replaceSlug || undefined,
+    editSlug: options.editSlug || undefined,
     editToken: options.editToken,
+    title: options.title,
   };
   let body: Record<string, unknown>;
 
-  if (draft.kind === "trace") {
+  if (!draft) {
+    body = common;
+  } else if (draft.kind === "trace") {
     const upload = await requireOk(
       await fetch("/api/trace-uploads", { method: "POST" }),
       "Could not start trace upload"

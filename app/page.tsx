@@ -5,9 +5,9 @@ import AddSkillPanel from "@/components/AddSkillPanel";
 import ConnectedTokens from "@/components/ConnectedTokens";
 import MyShares, { type ServerShare } from "@/components/MyShares";
 import Logo from "@/components/Logo";
+import PublishPanel, { type EditTarget } from "@/components/PublishPanel";
 import { authClient } from "@/lib/auth-client";
-import { checkDraft, type Draft } from "@/lib/draft";
-import { formatBytes } from "@/lib/format-bytes";
+import type { Draft } from "@/lib/draft";
 import { publishDraft } from "@/lib/publish-draft";
 import { detectTextArtifactKind, validateTextArtifact } from "@/lib/validate";
 
@@ -35,13 +35,6 @@ function removeLegacyEditToken(slug: string) {
 }
 
 const SCRAMBLE = "abcdefghijklmnopqrstuvwxyz0123456789_-";
-
-function parseReplaceSlug(input: string): string {
-  const trimmed = input.trim();
-  if (!trimmed) return "";
-  const segment = trimmed.includes("/s/") ? trimmed.split("/s/").pop() ?? "" : trimmed;
-  return segment.replace(/\/+$/, "").split(/[?#]/)[0];
-}
 
 function useScramble(target: string) {
   const [text, setText] = useState(target);
@@ -129,9 +122,10 @@ function usePublisherIdentity(): PublisherIdentity {
 
 export default function Page() {
   const [draft, setDraft] = useState<Draft | null>(null);
+  const [editTarget, setEditTarget] = useState<EditTarget | null>(null);
+  const [title, setTitle] = useState("");
   const [dragging, setDragging] = useState(false);
   const [pasteOpen, setPasteOpen] = useState(false);
-  const [replaceSlug, setReplaceSlug] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [sharesError, setSharesError] = useState("");
@@ -149,8 +143,6 @@ export default function Page() {
   const origin = typeof location !== "undefined" ? location.origin : "";
   const shortLink = publishedSlug ? `${origin}/s/${publishedSlug}` : "";
   const scrambled = useScramble(shortLink);
-
-  const draftCheck = checkDraft(draft);
 
   const loadShares = useCallback(async () => {
     if (identity === "loading") return;
@@ -181,16 +173,31 @@ export default function Page() {
     loadShares();
   }, [loadShares]);
 
-  const acceptText = useCallback((text: string, source: string) => {
-    setDraft({ kind: detectTextArtifactKind(text, source), source, text });
-    setPublishedSlug("");
-    setError("");
-    setPasteOpen(false);
-  }, []);
+  const rejectKindMismatch = useCallback(
+    (kind: Draft["kind"]) => {
+      if (!editTarget || kind === editTarget.kind) return false;
+      setError(`Artifact kind must remain ${editTarget.kind} on Edit`);
+      return true;
+    },
+    [editTarget]
+  );
+
+  const acceptText = useCallback(
+    (text: string, source: string) => {
+      const kind = detectTextArtifactKind(text, source);
+      if (rejectKindMismatch(kind)) return;
+      setDraft({ kind, source, text });
+      setPublishedSlug("");
+      setError("");
+      setPasteOpen(false);
+    },
+    [rejectKindMismatch]
+  );
 
   const readFile = useCallback(
     (file: File) => {
       if (file.name.toLowerCase().endsWith(".zip")) {
+        if (rejectKindMismatch("trace")) return;
         setDraft({ kind: "trace", source: file.name, file });
         setPublishedSlug("");
         setError("");
@@ -199,7 +206,7 @@ export default function Page() {
       }
       file.text().then((text) => acceptText(text, file.name));
     },
-    [acceptText]
+    [acceptText, rejectKindMismatch]
   );
 
   useEffect(() => {
@@ -220,7 +227,10 @@ export default function Page() {
       const target = e.target as HTMLElement;
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
       const text = e.clipboardData?.getData("text") || "";
-      if (detectTextArtifactKind(text) === "html") acceptText(text, "clipboard");
+      const kind = detectTextArtifactKind(text);
+      if (kind === "html" && !validateTextArtifact(text, kind)) {
+        acceptText(text, "clipboard");
+      }
     };
     document.addEventListener("dragover", onDragOver);
     document.addEventListener("dragleave", onDragLeave);
@@ -234,30 +244,35 @@ export default function Page() {
     };
   }, [acceptText, readFile]);
 
-  const startReplace = useCallback((slug: string) => {
-    setReplaceSlug(slug);
+  const startEdit = useCallback((share: ServerShare) => {
+    setEditTarget({
+      slug: share.slug,
+      kind: share.kind,
+      title: share.title,
+      legacy: share.legacy,
+    });
+    setTitle(share.title ?? "");
     setPublishedSlug("");
     setDraft(null);
     setError("");
-    requestAnimationFrame(() => fileInput.current?.click());
   }, []);
 
   const publish = async () => {
     setBusy(true);
     setError("");
     try {
-      const slug = parseReplaceSlug(replaceSlug);
-      const targetShare = slug ? shares.find((s) => s.slug === slug) : undefined;
+      const slug = editTarget?.slug;
       const editToken = slug ? legacyEditTokens[slug] : undefined;
-      if (slug && targetShare?.legacy === true && !editToken) {
+      if (editTarget?.legacy === true && !editToken) {
         setError("No Browser edit token for that legacy Share in this browser");
         return;
       }
 
-      if (!draft) return;
+      if (!draft && !editTarget) return;
       const data = await publishDraft(draft, {
-        replaceSlug: slug || undefined,
+        editSlug: slug,
         editToken,
+        title,
       });
 
       if (typeof data.editToken === "string" && data.slug) {
@@ -268,7 +283,8 @@ export default function Page() {
       await loadShares();
       setPublishedSlug(data.slug);
       setDraft(null);
-      setReplaceSlug("");
+      setEditTarget(null);
+      setTitle("");
     } catch (publishError) {
       setError(publishError instanceof Error ? publishError.message : "Network error");
     } finally {
@@ -311,7 +327,14 @@ export default function Page() {
     window.location.href = "/sign-in";
   };
 
-  const armed = draft !== null;
+  const discardPanel = () => {
+    setDraft(null);
+    setEditTarget(null);
+    setTitle("");
+    setError("");
+  };
+
+  const armed = editTarget !== null || draft !== null;
 
   return (
     <div className={shares.length > 0 ? "has-shares" : undefined}>
@@ -406,57 +429,19 @@ export default function Page() {
                 </div>
               </div>
             )}
-            {replaceSlug && (
-              <div className="replace-banner">
-                replacing /s/{parseReplaceSlug(replaceSlug)} — drop or paste same kind
-                <button type="button" onClick={() => setReplaceSlug("")}>
-                  cancel
-                </button>
-              </div>
-            )}
           </>
         ) : (
-          <div className="panel">
-            <div className="meta">
-              <span>
-                {draft.source} · {draft.kind}
-              </span>
-              <span>
-                {formatBytes(draftCheck.bytes)}{" "}
-                <span className={draftCheck.ok ? "ok" : "bad"}>{draftCheck.label}</span>
-              </span>
-            </div>
-
-            <div className="field">
-              <label>replace — optional short link</label>
-              <input
-                value={replaceSlug}
-                placeholder="leave empty for a new share"
-                onChange={(e) => setReplaceSlug(e.target.value)}
-                spellCheck={false}
-              />
-            </div>
-
-            <div className="actions">
-              <button
-                className="publish"
-                disabled={busy || !draftCheck.ok}
-                onClick={publish}
-              >
-                {busy ? "publishing…" : replaceSlug.trim() ? "replace" : "publish"}
-              </button>
-              <button
-                className="ghost"
-                onClick={() => {
-                  setDraft(null);
-                }}
-              >
-                discard
-              </button>
-            </div>
-
-            {error && <div className="error">{error}</div>}
-          </div>
+          <PublishPanel
+            draft={draft}
+            editTarget={editTarget}
+            title={title}
+            busy={busy}
+            error={error}
+            onTitleChange={setTitle}
+            onChooseArtifact={() => fileInput.current?.click()}
+            onPublish={publish}
+            onDiscard={discardPanel}
+          />
         )}
       </main>
 
@@ -465,7 +450,7 @@ export default function Page() {
         shares={shares}
         origin={origin}
         legacyEditTokens={legacyEditTokens}
-        onReplace={startReplace}
+        onEdit={startEdit}
         onDelete={remove}
         onCopy={copy}
         error={sharesError}

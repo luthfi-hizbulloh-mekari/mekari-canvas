@@ -299,36 +299,44 @@ cmd_setup() {
   echo "Setup complete. Shared Publisher API token saved to $CONFIG"
 }
 
-publish_payload() { # kind ref replace_slug
-  local kind="$1" ref="$2" replace_slug="$3"
+publish_payload() { # Empty kind means Title-only; title_set distinguishes omit from clear.
+  local kind="$1" ref="$2" edit_slug="$3" title="$4" title_set="$5" base
   if [[ "$kind" == trace ]]; then
-    jq -n --arg uploadId "$ref" --arg slug "$replace_slug" \
-      '{kind: "trace", uploadId: $uploadId} + (if $slug == "" then {} else {replaceSlug: $slug} end)'
+    base=$(jq -n --arg uploadId "$ref" '{kind: "trace", uploadId: $uploadId}')
+  elif [[ -n "$kind" ]]; then
+    base=$(jq -n --arg content "$ref" --arg kind "$kind" '{content: $content, kind: $kind}')
   else
-    jq -n --arg content "$ref" --arg kind "$kind" --arg slug "$replace_slug" \
-      '{content: $content, kind: $kind} + (if $slug == "" then {} else {replaceSlug: $slug} end)'
+    base='{}'
   fi
+  jq -n --argjson base "$base" --arg slug "$edit_slug" --arg title "$title" \
+    --argjson titleSet "$title_set" \
+    '$base
+      + (if $slug == "" then {} else {editSlug: $slug} end)
+      + (if $titleSet then {title: $title} else {} end)'
 }
 
 cmd_publish() {
-  local force_new=false replace_slug=""
+  local force_new=false edit_slug="" title="" title_set=false
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --new) force_new=true; shift ;;
-      --replace) replace_slug="$2"; shift 2 ;;
+      --title)
+        [[ $# -ge 2 ]] || die "--title requires a value"
+        title="$2"; title_set=true; shift 2
+        ;;
       -*) die "unknown flag: $1" ;;
       *) break ;;
     esac
   done
   local file="${1:-}"
-  [[ -n "$file" && -f "$file" ]] || die "usage: mekari-canvas publish [--new] [--replace <slug>] <file>"
+  [[ -n "$file" && -f "$file" ]] || die "usage: mekari-canvas publish [--new] [--title <title>] <file>"
 
   load_config
   local kind slug upload_id="" content=""
   kind=$(detect_kind "$file")
 
-  if [[ "$force_new" == false && -z "$replace_slug" ]]; then
-    replace_slug=$(read_manifest_slug "$file" || true)
+  if [[ "$force_new" == false ]]; then
+    edit_slug=$(read_manifest_slug "$file" || true)
   fi
 
   if [[ "$kind" == trace ]]; then
@@ -338,18 +346,18 @@ cmd_publish() {
   fi
 
   local payload
-  payload=$(publish_payload "$kind" "${upload_id:-$content}" "$replace_slug")
+  payload=$(publish_payload "$kind" "${upload_id:-$content}" "$edit_slug" "$title" "$title_set")
   publish_request "$payload"
   local error_code
   error_code=$(echo "$HTTP_BODY" | jq -r '.code // empty' 2>/dev/null || true)
-  if [[ "$HTTP_STATUS" == 404 && "$error_code" == share_not_found && -n "$replace_slug" ]]; then
-    remove_manifest_slug "$replace_slug"
-    replace_slug=""
+  if [[ "$HTTP_STATUS" == 404 && "$error_code" == share_not_found && -n "$edit_slug" ]]; then
+    remove_manifest_slug "$edit_slug"
+    edit_slug=""
     if [[ "$kind" == trace ]]; then
       # The failed commit consumes its immutable staged upload; retry with a fresh one.
       upload_id=$(stage_trace_upload "$file")
     fi
-    payload=$(publish_payload "$kind" "${upload_id:-$content}" "")
+    payload=$(publish_payload "$kind" "${upload_id:-$content}" "" "$title" "$title_set")
     publish_request "$payload"
   fi
   if [[ "$HTTP_STATUS" -lt 200 || "$HTTP_STATUS" -ge 300 ]]; then
@@ -367,7 +375,7 @@ cmd_publish() {
 cmd_list() {
   load_config
   api GET /api/shares \
-    | jq -r '.shares[] | [.slug, .kind, .updatedAt, (.expiresAt // "permanent")] | @tsv' \
+    | jq -r '.shares[] | [.slug, (.title // ""), .kind, .updatedAt, (.expiresAt // "permanent")] | @tsv' \
     | column -t -s $'\t'
 }
 
@@ -380,10 +388,52 @@ cmd_delete() {
   echo "deleted /s/${slug}"
 }
 
-cmd_replace() {
-  local file="${1:-}" slug="${2:-}"
-  [[ -n "$file" && -f "$file" && -n "$slug" ]] || die "usage: mekari-canvas replace <file> <slug>"
-  cmd_publish --replace "$slug" "$file"
+cmd_edit() {
+  local slug="${1:-}" title="" title_set=false file=""
+  [[ -n "$slug" ]] || die "usage: mekari-canvas edit <slug> [--title <title>] [file]"
+  shift
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --title)
+        [[ $# -ge 2 ]] || die "--title requires a value"
+        title="$2"; title_set=true; shift 2
+        ;;
+      -*) die "unknown flag: $1" ;;
+      *)
+        [[ -z "$file" ]] || die "usage: mekari-canvas edit <slug> [--title <title>] [file]"
+        file="$1"; shift
+        ;;
+    esac
+  done
+  [[ "$title_set" == true || -n "$file" ]] \
+    || die "edit requires --title or an Artifact file"
+  [[ -z "$file" || -f "$file" ]] || die "Artifact file not found: $file"
+
+  load_config
+  local kind="" upload_id="" content="" payload published_slug
+  if [[ -n "$file" ]]; then
+    kind=$(detect_kind "$file")
+    if [[ "$kind" == trace ]]; then
+      upload_id=$(stage_trace_upload "$file")
+    else
+      content=$(<"$file")
+    fi
+  fi
+
+  payload=$(publish_payload "$kind" "${upload_id:-$content}" "$slug" "$title" "$title_set")
+  publish_request "$payload"
+  if [[ "$HTTP_STATUS" -lt 200 || "$HTTP_STATUS" -ge 300 ]]; then
+    local message
+    message=$(error_message "$HTTP_BODY" "edit failed")
+    die "$message (HTTP $HTTP_STATUS)"
+  fi
+
+  published_slug=$(echo "$HTTP_BODY" | jq -r '.slug // empty')
+  [[ -n "$published_slug" ]] || die "invalid publish response"
+  if [[ -n "$file" ]]; then
+    write_manifest_slug "$file" "$published_slug"
+  fi
+  echo "${API_BASE}/s/${published_slug}"
 }
 
 usage() {
@@ -391,10 +441,10 @@ usage() {
 mekari-canvas — Mekari Canvas Agent publish
 
   setup <code> [manifest-url]   Reuse or exchange the shared Publisher API token
-  publish [--new] [--replace S] <file>   Publish or replace Share
+  publish [--new] [--title T] <file>     Publish or auto-Edit Share
+  edit <slug> [--title T] [file]         Edit Title and/or Artifact
   list                          List your Shares
   delete <slug>                 Delete a Share
-  replace <file> <slug>         Replace specific slug
 EOF
 }
 
@@ -406,7 +456,7 @@ main() {
     publish) cmd_publish "$@" ;;
     list) cmd_list "$@" ;;
     delete) cmd_delete "$@" ;;
-    replace) cmd_replace "$@" ;;
+    edit) cmd_edit "$@" ;;
     ""|help|-h|--help) usage ;;
     *) die "unknown command: $cmd (try: mekari-canvas help)" ;;
   esac

@@ -16,6 +16,7 @@ export async function GET(req: Request) {
     return Response.json({
       shares: shares.map((meta) => ({
         slug: meta.slug,
+        title: meta.title,
         kind: meta.kind,
         createdAt: meta.createdAt,
         updatedAt: meta.updatedAt,

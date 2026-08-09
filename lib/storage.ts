@@ -24,13 +24,14 @@ import {
 export type ShareMeta = {
   slug: string;
   kind: ArtifactKind;
+  title?: string;
   editTokenHash: string;
   createdAt: string;
   updatedAt: string;
   size: number;
   /** Publisher email at create; absent on legacy Shares. */
   publishedBy?: string;
-  /** Current blob object key; new key on each replace avoids CDN stale reads. */
+  /** Current blob object key; new key on each Artifact Edit avoids CDN stale reads. */
   blobPath?: string;
   /** Present only for expiring Playwright Trace Shares. */
   expiresAt?: string;
@@ -43,6 +44,7 @@ export interface StorageDriver {
   getMeta(slug: string): Promise<ShareMeta | null>;
   open(meta: ShareMeta): Promise<ReadableStream<Uint8Array> | null>;
   put(meta: ShareMeta, body: Uint8Array | ReadableStream<Uint8Array>): Promise<void>;
+  putMeta(meta: ShareMeta): Promise<void>;
   createTraceUpload(uploadId: string, localApiBase: string): Promise<string>;
   receiveTraceUpload(uploadId: string, body: ReadableStream<Uint8Array>): Promise<void>;
   stagedTraceSize(uploadId: string): Promise<number>;
@@ -294,6 +296,12 @@ class LocalDriver implements StorageDriver {
     await this.writeBody(blobFile, body);
     await this.commitMeta(meta, previous, blobPath);
     await this.deletePrevious(previous, blobPath);
+  }
+
+  async putMeta(meta: ShareMeta): Promise<void> {
+    const index = await this.readIndex();
+    index[meta.slug] = { ...meta };
+    await this.writeIndex(index);
   }
 
   async commitStagedTrace(meta: ShareMeta, uploadId: string): Promise<void> {

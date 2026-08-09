@@ -33,6 +33,7 @@ describe("GET /api/shares expiration JSON", () => {
       {
         ...common,
         slug: "expiring",
+        title: "checkout flake trace",
         kind: "trace",
         size: 1_000_000,
         expiresAt: "2030-08-12T00:00:00.000Z",
@@ -47,6 +48,7 @@ describe("GET /api/shares expiration JSON", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
+    expect(body.shares[0].title).toBe("checkout flake trace");
     expect(body.shares[0].expiresAt).toBe("2030-08-12T00:00:00.000Z");
     expect(body.shares[1].expiresAt).toBeNull();
     expect(body.shares[2]).not.toHaveProperty("expiresAt");

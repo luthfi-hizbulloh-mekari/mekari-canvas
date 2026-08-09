@@ -16,7 +16,7 @@ function render(shares: ServerShare[]): string {
       shares={shares}
       origin="https://canvas.example"
       legacyEditTokens={{}}
-      onReplace={vi.fn()}
+      onEdit={vi.fn()}
       onDelete={vi.fn()}
       onCopy={vi.fn()}
     />
@@ -24,6 +24,18 @@ function render(shares: ServerShare[]): string {
 }
 
 describe("MyShares trace metadata", () => {
+  it("uses Title as the only primary link text and falls back to the Short link path", () => {
+    const markup = render([
+      { ...common, slug: "titled", title: "checkout flake trace" },
+      { ...common, slug: "untitled" },
+    ]);
+
+    expect(markup).toContain(">checkout flake trace</a>");
+    expect(markup).not.toContain(">/s/titled</a>");
+    expect(markup).toContain(">/s/untitled</a>");
+    expect(markup).toContain('aria-label="edit checkout flake trace"');
+  });
+
   it("renders decimal trace size and a present expiration", () => {
     const markup = render([
       {

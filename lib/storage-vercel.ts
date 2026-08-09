@@ -209,6 +209,10 @@ export class VercelDriver implements StorageDriver {
     await this.deletePrevious(previous, path);
   }
 
+  async putMeta(meta: ShareMeta): Promise<void> {
+    await getRedis().set(metaKey(meta.slug), { ...meta });
+  }
+
   async commitStagedTrace(meta: ShareMeta, uploadId: string): Promise<void> {
     const previous = await this.getMeta(meta.slug);
     const path = versionedBlobPath(meta.slug, meta.updatedAt, "trace");

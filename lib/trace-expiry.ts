@@ -11,7 +11,7 @@ export function isValidTraceSize(size: unknown): size is number {
 }
 
 /**
- * Applies the complete trace-retention transition for a create or replacement.
+ * Applies the complete trace-retention transition for a create or Artifact Edit.
  * Stored expiration is consulted only when both trace sizes are in the same class.
  */
 export function decideTraceRetention(

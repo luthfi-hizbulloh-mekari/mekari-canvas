@@ -2,9 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const blob = vi.hoisted(() => ({
   copy: vi.fn(),
+  del: vi.fn(),
   get: vi.fn(),
   issueSignedToken: vi.fn(),
   presignUrl: vi.fn(),
+  put: vi.fn(),
 }));
 
 const redis = vi.hoisted(() => {
@@ -18,6 +20,8 @@ const redis = vi.hoisted(() => {
   return {
     get: vi.fn(),
     multi: vi.fn(),
+    sadd: vi.fn(),
+    set: vi.fn(),
     transaction,
     zrange: vi.fn(),
     zrem: vi.fn(),
@@ -27,13 +31,13 @@ const redis = vi.hoisted(() => {
 vi.mock("@vercel/blob", () => ({
   BlobNotFoundError: class BlobNotFoundError extends Error {},
   copy: blob.copy,
-  del: vi.fn(),
+  del: blob.del,
   get: blob.get,
   head: vi.fn(),
   issueSignedToken: blob.issueSignedToken,
   list: vi.fn(),
   presignUrl: blob.presignUrl,
-  put: vi.fn(),
+  put: blob.put,
 }));
 vi.mock("@/lib/redis", () => ({
   getRedis: () => redis,
@@ -174,5 +178,29 @@ describe("Vercel trace expiry index", () => {
       "expired",
     ]);
     expect(redis.zrem).toHaveBeenCalledWith("canvas:trace:expiry", "permanent");
+  });
+
+  it("writes Title metadata without touching Blob, publisher, or expiry indexes", async () => {
+    const previous = {
+      ...baseMeta,
+      blobPath: "shares/abc12345/old.zip",
+      expiresAt: "2026-08-12T00:00:00.000Z",
+    };
+    redis.get.mockResolvedValue(previous);
+
+    await new VercelDriver().putMeta({ ...previous, title: "checkout flake trace" });
+
+    expect(redis.set).toHaveBeenCalledWith("canvas:share:abc12345", {
+      ...previous,
+      title: "checkout flake trace",
+    });
+    expect(redis.multi).not.toHaveBeenCalled();
+    expect(redis.sadd).not.toHaveBeenCalled();
+    expect(redis.zrem).not.toHaveBeenCalled();
+    expect(redis.transaction.zadd).not.toHaveBeenCalled();
+    expect(redis.transaction.zrem).not.toHaveBeenCalled();
+    expect(blob.put).not.toHaveBeenCalled();
+    expect(blob.copy).not.toHaveBeenCalled();
+    expect(blob.del).not.toHaveBeenCalled();
   });
 });

@@ -9,21 +9,68 @@ describe("parsePublishRequest", () => {
     });
   });
 
-  it("accepts the staged trace commit contract", () => {
+  it("accepts the staged trace create contract", () => {
     expect(
-      parsePublishRequest({ kind: "trace", uploadId: "123456789012345678901" })
-    ).toMatchObject({ ok: true, value: { kind: "trace" } });
+      parsePublishRequest({
+        kind: "trace",
+        uploadId: "123456789012345678901",
+        title: " checkout flake trace ",
+      })
+    ).toEqual({
+      ok: true,
+      value: {
+        mode: "create",
+        artifact: { kind: "trace", uploadId: "123456789012345678901" },
+        title: "checkout flake trace",
+      },
+    });
   });
 
   it.each([
     ["html", "<!doctype html><html></html>"],
     ["md", "# Agent notes"],
-  ] as const)("accepts the %s text contract", (kind, content) => {
+  ] as const)("accepts the %s Edit contract", (kind, content) => {
     expect(
-      parsePublishRequest({ kind, content, replaceSlug: "abc12345", editToken: "legacy" })
+      parsePublishRequest({ kind, content, editSlug: " abc12345 ", editToken: "legacy" })
     ).toEqual({
       ok: true,
-      value: { kind, content, replaceSlug: "abc12345", editToken: "legacy" },
+      value: {
+        mode: "edit",
+        slug: "abc12345",
+        artifact: { kind, content },
+        editToken: "legacy",
+      },
+    });
+  });
+
+  it("represents omitted, cleared, and set Edit Titles distinctly", () => {
+    expect(parsePublishRequest({ editSlug: "abc12345" })).toEqual({
+      ok: true,
+      value: { mode: "edit", slug: "abc12345" },
+    });
+    expect(parsePublishRequest({ editSlug: "abc12345", title: "  " })).toEqual({
+      ok: true,
+      value: { mode: "edit", slug: "abc12345", title: null },
+    });
+    expect(parsePublishRequest({ editSlug: "abc12345", title: " PR #412 handoff " })).toEqual({
+      ok: true,
+      value: { mode: "edit", slug: "abc12345", title: "PR #412 handoff" },
+    });
+  });
+
+  it("rejects create without an Artifact", () => {
+    expect(parsePublishRequest({ title: "orphan Title" })).toEqual({
+      ok: false,
+      error: "Artifact required to create a Share",
+    });
+  });
+
+  it("rejects Titles longer than 120 Unicode characters after trim", () => {
+    expect(
+      parsePublishRequest({ kind: "md", content: "hello", title: ` ${"🧪".repeat(121)} ` })
+    ).toEqual({
+      ok: false,
+      error: "Title must be 120 characters or fewer",
     });
   });
 
@@ -34,10 +81,15 @@ describe("parsePublishRequest", () => {
     });
   });
 
-  it("rejects non-string optional Replace fields", () => {
-    expect(parsePublishRequest({ kind: "md", content: "hello", replaceSlug: 123 })).toEqual({
+  it("rejects non-string optional Edit fields", () => {
+    expect(parsePublishRequest({ kind: "md", content: "hello", editSlug: 123 })).toEqual({
       ok: false,
-      error: "Invalid Replace fields",
+      error: "Invalid Edit fields",
+    });
+    expect(parsePublishRequest({ editSlug: "abc12345", title: null })).toEqual({
+      ok: false,
+      error: "Invalid Edit fields",
     });
   });
+
 });

@@ -1,5 +1,19 @@
 import { ARTIFACT_KIND, type TextArtifactKind } from "@/lib/artifact-kind";
 
+export const MAX_TITLE_LENGTH = 120;
+
+export type TitleValidation =
+  | { ok: true; value: string | null }
+  | { ok: false; error: string };
+
+export function validateTitle(input: string): TitleValidation {
+  const value = input.trim();
+  if ([...value].length > MAX_TITLE_LENGTH) {
+    return { ok: false, error: `Title must be ${MAX_TITLE_LENGTH} characters or fewer` };
+  }
+  return { ok: true, value: value || null };
+}
+
 export function artifactBytes(body: string): number {
   return new TextEncoder().encode(body).byteLength;
 }

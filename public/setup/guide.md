@@ -30,18 +30,18 @@ Token setup does not install or overwrite Skill files. It preserves a valid toke
 
 | Command | Action |
 |---------|--------|
-| `/mekari-canvas publish <file>` | Create or auto-Replace Share (uses `~/.canvas/publish-manifest.json`) |
-| `/mekari-canvas publish --new <file>` | Force new Share |
-| `/mekari-canvas replace <file> <slug>` | Replace specific slug |
+| `/mekari-canvas publish --title <title> <file>` | Create or auto-Edit Share (uses `~/.canvas/publish-manifest.json`) |
+| `/mekari-canvas publish --new --title <title> <file>` | Force new Share |
+| `/mekari-canvas edit <slug> [--title <title>] [file]` | Edit Title and/or Artifact |
 | `/mekari-canvas list` | List your Shares |
 | `/mekari-canvas delete <slug>` | Delete a Share |
 
 ## Local config files
 
 - `~/.canvas/config.json` — API base + Bearer token (harness-agnostic)
-- `~/.canvas/publish-manifest.json` — absolute file path → slug mapping for auto-Replace
+- `~/.canvas/publish-manifest.json` — absolute file path → slug mapping for auto-Edit
 
-Playwright traces are sent as raw ZIP bytes through a once-only, immutable direct upload URL. Final validated traces smaller than exactly 1,000,000 bytes have no automatic expiration; traces at or above 1,000,000 bytes expire 168 hours after a successful publish commit. On Replace, the same size class preserves any existing expiration, large → small clears it, and small → large sets a new seven-day deadline from replacement commit. A failed commit retry mints a fresh upload URL. If an expired Share has already been swept, the helper creates a new Share and updates the manifest.
+Playwright traces are sent as raw ZIP bytes through a once-only, immutable direct upload URL. Final validated traces smaller than exactly 1,000,000 bytes have no automatic expiration; traces at or above 1,000,000 bytes expire 168 hours after a successful publish commit. On Edit, the same size class preserves any existing expiration, large → small clears it, and small → large sets a new seven-day deadline from the Artifact overwrite commit. A failed commit retry mints a fresh upload URL. If an expired Share has already been swept, an Artifact-backed auto-Edit creates a new Share and updates the manifest.
 
 ## Refresh
 
