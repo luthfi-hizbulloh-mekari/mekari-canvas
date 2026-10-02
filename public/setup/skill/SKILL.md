@@ -1,10 +1,11 @@
 ---
 name: mekari-canvas
-version: 1.0.0
+version: 1.1.0
 description: >-
   Publish and manage Mekari Canvas Shares (HTML, Markdown, or Playwright Trace Artifacts) via the
-  Agent API. Use when the user invokes /mekari-canvas, wants to publish a
-  handoff doc, list Shares, edit, or delete. Supports shared Publisher API token setup and reuse.
+  Agent API, or read a Mekari Canvas Short link (`…/s/<slug>`). Use when the user invokes
+  /mekari-canvas, wants to publish a handoff doc, list Shares, edit, or delete, or shares a
+  mekari-canvas link to read. Supports shared Publisher API token setup and reuse.
 ---
 
 # Mekari Canvas
@@ -16,6 +17,7 @@ Agent publish for [Mekari Canvas](https://mekari-canvas.vercel.app) — Short li
 - User says `/mekari-canvas publish` on an attached `.md`, `.html`, or Playwright trace `.zip`
 - User wants a Short link for a handoff doc without opening the website
 - User asks to list, edit, or delete their Canvas Shares
+- You are given a Canvas Short link (`mekari-canvas…/s/<slug>`): read it with `read`. Never use a generic web fetch for Canvas links; they require Mekari sign-in and return a sign-in page or `401` instead of the Artifact.
 
 ## Setup and refresh
 
@@ -48,6 +50,7 @@ Resolve the path relative to this installed Skill directory.
 | Edit Title and/or Artifact | `edit <slug> [--title <title>] [<absolute-path>]` |
 | List Shares | `list` |
 | Delete Share | `delete <slug>` |
+| Read a Short link (Markdown/HTML to stdout; trace ZIP saved, path printed) | `read <short-link-or-slug> [--out <path>]` |
 | Validate/re-run shared token setup | `setup <code>` |
 
 ## HTTP API (if scripting manually)
@@ -63,6 +66,8 @@ All authenticated calls use `Authorization: Bearer <token>` from `~/.canvas/conf
 | POST | `/api/publish` | `{ editSlug, title }` for Title-only Edit |
 | GET | `/api/shares` | — |
 | DELETE | `/api/shares/:slug` | — |
+| GET | `/s/:slug` | —; Artifact body (302 for traces) |
+| GET | `/s/:slug/trace` | —; trace ZIP bytes |
 
 Response includes `slug` and optional `title` — Short link is `{apiBase}/s/{slug}`.
 

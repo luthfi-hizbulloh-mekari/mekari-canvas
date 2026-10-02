@@ -1,18 +1,10 @@
 import { betterAuth } from "better-auth";
 import { APIError } from "better-auth/api";
 import { nextCookies } from "better-auth/next-js";
+import { authSecret } from "@/lib/auth-secret";
 import { isMekariEmail } from "@/lib/mekari-email";
 
 const THIRTY_DAYS = 60 * 60 * 24 * 30;
-
-function authSecret(): string {
-  const secret = process.env.BETTER_AUTH_SECRET;
-  if (secret) return secret;
-  if (process.env.VERCEL === "1") {
-    throw new Error("BETTER_AUTH_SECRET is required on Vercel");
-  }
-  return "local-dev-secret-at-least-32-characters";
-}
 
 function requireOnVercel(name: string, value: string | undefined): string {
   if (value) return value;

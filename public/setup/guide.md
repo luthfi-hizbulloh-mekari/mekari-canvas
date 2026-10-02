@@ -35,6 +35,7 @@ Token setup does not install or overwrite Skill files. It preserves a valid toke
 | `/mekari-canvas edit <slug> [--title <title>] [file]` | Edit Title and/or Artifact |
 | `/mekari-canvas list` | List your Shares |
 | `/mekari-canvas delete <slug>` | Delete a Share |
+| `/mekari-canvas read <short-link>` | Read a Share (Short links require Mekari sign-in or the Publisher API token) |
 
 ## Local config files
 

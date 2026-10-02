@@ -1,6 +1,7 @@
 import { ARTIFACT_KIND } from "@/lib/artifact-kind";
 import { loadLiveShare } from "@/lib/share-lookup";
 import { getStorage } from "@/lib/storage";
+import { rawTraceDenial } from "@/lib/viewer-access";
 
 export const dynamic = "force-dynamic";
 
@@ -13,6 +14,10 @@ const CORS_HEADERS = {
   "cache-control": "no-store",
 };
 
+function notFound(): Response {
+  return new Response("Not found", { status: 404, headers: { "cache-control": "no-store" } });
+}
+
 async function traceMeta(slug: string) {
   const meta = await loadLiveShare(slug);
   return meta?.kind === "trace" ? meta : null;
@@ -23,9 +28,9 @@ async function serve(
   includeBody: boolean
 ): Promise<Response> {
   const meta = await traceMeta(slug);
-  if (!meta) return new Response("Not found", { status: 404 });
+  if (!meta) return notFound();
   const stream = await getStorage().open(meta);
-  if (!stream) return new Response("Not found", { status: 404 });
+  if (!stream) return notFound();
 
   const headers = new Headers({
     ...CORS_HEADERS,
@@ -39,25 +44,30 @@ async function serve(
   return new Response(includeBody ? stream : null, { headers });
 }
 
+async function guardedServe(
+  req: Request,
+  slug: string,
+  includeBody: boolean
+): Promise<Response> {
+  const denied = await rawTraceDenial(req, slug);
+  return denied ?? serve(slug, includeBody);
+}
+
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ slug: string }> }
 ) {
-  return serve((await params).slug, true);
+  return guardedServe(req, (await params).slug, true);
 }
 
 export async function HEAD(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ slug: string }> }
 ) {
-  return serve((await params).slug, false);
+  return guardedServe(req, (await params).slug, false);
 }
 
-export async function OPTIONS(
-  _req: Request,
-  { params }: { params: Promise<{ slug: string }> }
-) {
-  const { slug } = await params;
-  if (!(await traceMeta(slug))) return new Response("Not found", { status: 404 });
+// Preflights carry no credentials, and a Share lookup here would reveal which slugs exist.
+export async function OPTIONS() {
   return new Response(null, { status: 204, headers: CORS_HEADERS });
 }

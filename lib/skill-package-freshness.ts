@@ -1,6 +1,6 @@
 import { SKILL_REFRESH_STEPS } from "@/lib/skill-distribution";
 
-export const CURRENT_SKILL_PACKAGE_VERSION = "1.0.0";
+export const CURRENT_SKILL_PACKAGE_VERSION = "1.1.0";
 export const MINIMUM_SKILL_PACKAGE_VERSION = "1.0.0";
 
 export type SkillPackageVerdict =

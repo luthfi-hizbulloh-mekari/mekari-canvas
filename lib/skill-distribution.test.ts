@@ -4,7 +4,9 @@ import {
   isSkillSetupUsable,
   MEKARI_CANVAS_INSTALL_COMMAND,
   parseSkillSetup,
+  SKILL_REFRESH_STEPS,
   type SkillSetup,
+  viewerSignInRequiredText,
 } from "@/lib/skill-distribution";
 
 const setup: SkillSetup = {
@@ -52,5 +54,15 @@ describe("skill distribution setup", () => {
 
     expect(isSkillSetupUsable(setup, expiry - 15_001)).toBe(true);
     expect(isSkillSetupUsable(setup, expiry - 15_000)).toBe(false);
+  });
+});
+
+describe("Viewer sign-in guidance", () => {
+  it("points agents at the read subcommand and Skill refresh", () => {
+    const text = viewerSignInRequiredText("https://preview.example");
+
+    expect(text).toContain("/mekari-canvas read");
+    expect(text).toContain(SKILL_REFRESH_STEPS);
+    expect(text).toContain("https://preview.example");
   });
 });

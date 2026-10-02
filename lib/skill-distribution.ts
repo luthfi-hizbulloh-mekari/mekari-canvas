@@ -10,6 +10,19 @@ export const SKILL_REFRESH_STEPS = [
   MEKARI_CANVAS_INSTALL_COMMAND,
 ].join("\n");
 
+/** Plain-text 401 body for Short link and Raw trace requests without a Viewer. */
+export function viewerSignInRequiredText(apiBase: string): string {
+  return [
+    "Mekari Canvas Shares require Mekari sign-in.",
+    "Agents: read Canvas links with `/mekari-canvas read <short-link>` (Mekari Canvas Skill package).",
+    "If your installed skill has no `read` subcommand, refresh it:",
+    SKILL_REFRESH_STEPS,
+    "",
+    `No skill yet? Sign in at ${apiBase} and choose Add skill.`,
+    "",
+  ].join("\n");
+}
+
 export type SkillSetup = {
   code: string;
   expiresAt: string;

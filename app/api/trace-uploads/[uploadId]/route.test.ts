@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/publisher-session", () => ({
   getPublisherEmail: mocks.getPublisherEmail,
+  MEKARI_SIGN_IN_OR_TOKEN_REQUIRED: "Mekari sign-in or Publisher API token required",
 }));
 vi.mock("@/lib/storage", () => ({
   getStorage: mocks.getStorage,
@@ -39,6 +40,9 @@ describe("local staged trace PUT", () => {
     });
 
     expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({
+      error: "Mekari sign-in or Publisher API token required",
+    });
     expect(mocks.getStorage).not.toHaveBeenCalled();
     expect(mocks.receiveTraceUpload).not.toHaveBeenCalled();
   });

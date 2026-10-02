@@ -1,33 +1,20 @@
-import { execFile } from "node:child_process";
-import { copyFile, mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { tmpdir } from "node:os";
+import { copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import { CURRENT_SKILL_PACKAGE_VERSION } from "@/lib/skill-package-freshness";
 import {
   MEKARI_CANVAS_INSTALL_COMMAND,
   SKILL_REFRESH_STEPS,
 } from "@/lib/skill-distribution";
-
-const execFileAsync = promisify(execFile);
-const SCRIPT = path.resolve("public/setup/skill/scripts/mekari-canvas.sh");
-const temporaryHomes: string[] = [];
-
-async function makeHome(config?: Record<string, unknown>) {
-  const home = await mkdtemp(path.join(tmpdir(), "mekari-canvas-setup-"));
-  temporaryHomes.push(home);
-  if (config) {
-    await mkdir(path.join(home, ".canvas"), { recursive: true });
-    await writeFile(
-      path.join(home, ".canvas", "config.json"),
-      `${JSON.stringify(config, null, 2)}\n`,
-      { mode: 0o644 }
-    );
-  }
-  return home;
-}
+import {
+  execFileAsync,
+  makeHome,
+  readRequestBody,
+  removeTemporaryHomes,
+  runCanvas,
+  SCRIPT,
+  withServer,
+} from "@/tests/support/canvas-script";
 
 async function readConfig(home: string) {
   return JSON.parse(await readFile(path.join(home, ".canvas", "config.json"), "utf8"));
@@ -39,45 +26,7 @@ async function runSetup(home: string, manifestUrl: string) {
   });
 }
 
-async function runCanvas(home: string, ...args: string[]) {
-  return execFileAsync("bash", [SCRIPT, ...args], {
-    env: { ...process.env, HOME: home },
-  });
-}
-
-function readRequestBody(request: IncomingMessage, done: (body: string) => void) {
-  let body = "";
-  request.setEncoding("utf8");
-  request.on("data", (chunk) => {
-    body += chunk;
-  });
-  request.on("end", () => done(body));
-}
-
-async function withServer(
-  handler: (request: IncomingMessage, response: ServerResponse) => void,
-  run: (baseUrl: string) => Promise<void>
-) {
-  const server = createServer(handler);
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", resolve);
-  });
-  const address = server.address();
-  if (!address || typeof address === "string") throw new Error("Test server did not bind");
-
-  try {
-    await run(`http://127.0.0.1:${address.port}`);
-  } finally {
-    await new Promise<void>((resolve, reject) =>
-      server.close((error) => (error ? reject(error) : resolve()))
-    );
-  }
-}
-
-afterEach(async () => {
-  await Promise.all(temporaryHomes.splice(0).map((home) => rm(home, { recursive: true })));
-});
+afterEach(removeTemporaryHomes);
 
 describe("mekari-canvas Skill package metadata", () => {
   async function copyScript(home: string) {

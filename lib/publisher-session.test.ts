@@ -16,7 +16,11 @@ vi.mock("@/lib/token-store", () => ({
   validateBearerToken: mocks.validateBearerToken,
 }));
 
-import { getPublisherEmail, getPublisherIdentity } from "@/lib/publisher-session";
+import {
+  getPublisherEmail,
+  getPublisherIdentity,
+  getTokenPublisherEmail,
+} from "@/lib/publisher-session";
 
 describe("publisher identity resolution", () => {
   beforeEach(() => {
@@ -67,5 +71,38 @@ describe("publisher identity resolution", () => {
     });
 
     await expect(getPublisherEmail(request)).resolves.toBe("agent@mekari.com");
+  });
+});
+
+describe("token-only identity resolution", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mocks.devBypassEmail.mockReturnValue(null);
+    mocks.getSession.mockResolvedValue(null);
+    mocks.validateBearerToken.mockResolvedValue(null);
+  });
+
+  it("returns the token owner for a valid Bearer token", async () => {
+    mocks.validateBearerToken.mockResolvedValue("agent@mekari.com");
+    const request = new Request("http://localhost", {
+      headers: { authorization: "Bearer publisher-token" },
+    });
+
+    await expect(getTokenPublisherEmail(request)).resolves.toBe("agent@mekari.com");
+    expect(mocks.validateBearerToken).toHaveBeenCalledWith("publisher-token");
+  });
+
+  it("returns null without an Authorization header", async () => {
+    await expect(getTokenPublisherEmail(new Request("http://localhost"))).resolves.toBeNull();
+    expect(mocks.validateBearerToken).not.toHaveBeenCalled();
+  });
+
+  it("ignores the browser session and the local development bypass", async () => {
+    mocks.devBypassEmail.mockReturnValue("dev@mekari.com");
+    mocks.getSession.mockResolvedValue({ user: { email: "browser@mekari.com" } });
+
+    await expect(getTokenPublisherEmail(new Request("http://localhost"))).resolves.toBeNull();
+    expect(mocks.getSession).not.toHaveBeenCalled();
+    expect(mocks.devBypassEmail).not.toHaveBeenCalled();
   });
 });

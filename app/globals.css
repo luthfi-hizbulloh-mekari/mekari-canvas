@@ -223,6 +223,13 @@ textarea {
   margin-top: 24px;
 }
 
+.sign-in-agent-hint {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--dim);
+  margin-top: 40px;
+}
+
 /* ---------- stage ---------- */
 
 .stage {

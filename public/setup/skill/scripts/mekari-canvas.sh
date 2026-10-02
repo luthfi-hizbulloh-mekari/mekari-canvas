@@ -51,20 +51,29 @@ load_config() {
   set_curl_auth_headers "$TOKEN"
 }
 
-http() {
-  local method="$1" url="$2" body_file error_file
+download() { # url output-file curl-args... — byte-exact body to a file, no redirects followed
+  local url="$1" output="$2" error_file
   shift 2
-  body_file=$(mktemp)
   error_file=$(mktemp)
   HTTP_ERROR=""
-  HTTP_STATUS=$(curl -sS -o "$body_file" -w '%{http_code}' -X "$method" "$@" "$url" 2>"$error_file") || {
+  HTTP_STATUS=$(curl -sS -o "$output" -w '%{http_code}' "$@" "$url" 2>"$error_file") || {
     HTTP_ERROR=$(<"$error_file")
     HTTP_ERROR=${HTTP_ERROR//"$url"/[request URL]}
     if [[ -n "${TOKEN:-}" ]]; then HTTP_ERROR=${HTTP_ERROR//"$TOKEN"/[redacted]}; fi
-    rm -f "$body_file" "$error_file"; HTTP_STATUS=000; HTTP_BODY=""; return 1
+    rm -f "$error_file"; HTTP_STATUS=000; return 1
+  }
+  rm -f "$error_file"
+}
+
+http() {
+  local method="$1" url="$2" body_file
+  shift 2
+  body_file=$(mktemp)
+  download "$url" "$body_file" -X "$method" "$@" || {
+    rm -f "$body_file"; HTTP_BODY=""; return 1
   }
   HTTP_BODY=$(<"$body_file")
-  rm -f "$body_file" "$error_file"
+  rm -f "$body_file"
 }
 
 error_message() { # body fallback
@@ -465,6 +474,107 @@ cmd_edit() {
   echo "${API_BASE}/s/${published_slug}"
 }
 
+read_slug() { # Short link or slug; the token is only ever sent to the configured API base.
+  local target="$1" url_pattern='^(https?://[^/?#]+)/s/([A-Za-z0-9_-]+)/?([?#].*)?$'
+  if [[ "$target" =~ ^[A-Za-z0-9_-]+$ ]]; then
+    READ_SLUG="$target"
+  elif [[ "$target" =~ $url_pattern ]]; then
+    [[ "${BASH_REMATCH[1]}" == "$API_BASE" ]] \
+      || die "refusing to send the Publisher API token to ${BASH_REMATCH[1]}; configured Canvas is $API_BASE"
+    READ_SLUG="${BASH_REMATCH[2]}"
+  else
+    die "not a Canvas Short link or slug: $target"
+  fi
+}
+
+read_failed() { # status body-file
+  local status="$1" body_file="$2" body
+  body=$(<"$body_file")
+  rm -f "$body_file"
+  case "$status" in
+    401|403)
+      die "read failed (HTTP $status): ${body:-unauthorized}
+If the token was revoked, run Add skill on the Canvas homepage." ;;
+    404) die "Share not found or expired" ;;
+    *) die "read failed (HTTP $status)" ;;
+  esac
+}
+
+finalize_output() { # tmp-file destination — move a downloaded body to a literal file path, then print it
+  local tmp="$1" destination="$2"
+  if [[ -d "$destination" ]]; then
+    rm -f "$tmp"
+    die "--out must be a file path, not a directory: $destination"
+  fi
+  if ! mv -f -- "$tmp" "$destination"; then
+    rm -f "$tmp"
+    die "could not write $destination"
+  fi
+  printf '%s\n' "$destination"
+}
+
+read_trace() { # slug destination
+  local slug="$1" destination="$2" tmp
+  tmp=$(mktemp)
+  if ! download "$API_BASE/s/$slug/trace" "$tmp" "${CURL_UPLOAD[@]}" \
+    ${CURL_AUTH_HEADERS[@]+"${CURL_AUTH_HEADERS[@]}"}; then
+    rm -f "$tmp"
+    die "trace download failed (HTTP $HTTP_STATUS): $HTTP_ERROR"
+  fi
+  [[ "$HTTP_STATUS" == 200 ]] || read_failed "$HTTP_STATUS" "$tmp"
+  finalize_output "$tmp" "$destination"
+}
+
+cmd_read() {
+  local out="" target=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --out)
+        [[ $# -ge 2 ]] || die "--out requires a path"
+        out="$2"; shift 2
+        ;;
+      --)
+        shift
+        [[ $# -le 1 && -z "$target" ]] || die "usage: mekari-canvas read <short-link-or-slug> [--out <path>]"
+        target="${1:-}"; shift $#
+        ;;
+      # Single-dash arguments are targets: a Slug may begin with "-". Use "--" before a "--" Slug.
+      --*) die "unknown flag: $1" ;;
+      *)
+        [[ -z "$target" ]] || die "usage: mekari-canvas read <short-link-or-slug> [--out <path>]"
+        target="$1"; shift
+        ;;
+    esac
+  done
+  [[ -n "$target" ]] || die "usage: mekari-canvas read <short-link-or-slug> [--out <path>]"
+
+  load_config
+  read_slug "$target"
+  local slug="$READ_SLUG" tmp
+  tmp=$(mktemp)
+  if ! download "$API_BASE/s/$slug" "$tmp" "${CURL_API[@]}" \
+    ${CURL_AUTH_HEADERS[@]+"${CURL_AUTH_HEADERS[@]}"}; then
+    rm -f "$tmp"
+    die "read failed (HTTP $HTTP_STATUS): $HTTP_ERROR"
+  fi
+  case "$HTTP_STATUS" in
+    200)
+      if [[ -n "$out" ]]; then
+        finalize_output "$tmp" "$out"
+      else
+        cat "$tmp"
+        rm -f "$tmp"
+      fi
+      ;;
+    3??)
+      # Playwright Trace Shares redirect to the external viewer; fetch the ZIP directly.
+      rm -f "$tmp"
+      read_trace "$slug" "${out:-${TMPDIR:-/tmp}/mekari-canvas-$slug.zip}"
+      ;;
+    *) read_failed "$HTTP_STATUS" "$tmp" ;;
+  esac
+}
+
 usage() {
   cat <<EOF
 mekari-canvas — Mekari Canvas Agent publish
@@ -474,6 +584,7 @@ mekari-canvas — Mekari Canvas Agent publish
   edit <slug> [--title T] [file]         Edit Title and/or Artifact
   list                          List your Shares
   delete <slug>                 Delete a Share
+  read <short-link-or-slug> [--out P]    Read a Share (trace ZIPs are saved to a file)
 EOF
 }
 
@@ -486,6 +597,7 @@ main() {
     list) cmd_list "$@" ;;
     delete) cmd_delete "$@" ;;
     edit) cmd_edit "$@" ;;
+    read) cmd_read "$@" ;;
     ""|help|-h|--help) usage ;;
     *) die "unknown command: $cmd (try: mekari-canvas help)" ;;
   esac

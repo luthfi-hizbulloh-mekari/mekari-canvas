@@ -1,6 +1,6 @@
 # Canvas
 
-Internal Mekari tool for engineers to upload self-contained HTML visualizations, agent-facing Markdown, and Playwright traces, sharing them via public short links — replacing ephemeral third-party HTML hosts and ad-hoc paste targets for rich content like PR summaries and test diagnostics. Deployed at `mekari-canvas.vercel.app`.
+Internal Mekari tool for engineers to upload self-contained HTML visualizations, agent-facing Markdown, and Playwright traces, sharing them via Short links viewable only by Mekari employees — replacing ephemeral third-party HTML hosts and ad-hoc paste targets for rich content like PR summaries and test diagnostics. Deployed at `mekari-canvas.vercel.app`.
 
 ## Language
 
@@ -21,7 +21,7 @@ Raw `.md` body for **agent** consumption — not styled for human reading. Store
 _Avoid_: MD file, text doc
 
 **Playwright Trace Artifact**:
-A Playwright-generated trace ZIP intended for interactive inspection in Playwright Trace Viewer. It is a trace payload, not a general-purpose ZIP upload, is accepted only when Canvas can recognize its supported trace structure, is limited to 50 MB, and is publicly viewable by anyone holding its Short link.
+A Playwright-generated trace ZIP intended for interactive inspection in Playwright Trace Viewer. It is a trace payload, not a general-purpose ZIP upload, is accepted only when Canvas can recognize its supported trace structure, is limited to 50 MB, and is viewable by any **Viewer** holding its Short link.
 _Avoid_: ZIP file, archive, attachment
 
 **Artifact kind**:
@@ -29,7 +29,7 @@ Whether a Share holds an **HTML Artifact**, **Markdown Artifact**, or **Playwrig
 _Avoid_: Format, type, mime
 
 **Short link**:
-The public URL for a Share (e.g. `https://mekari-canvas.vercel.app/s/x7k9m2p4`). It remains stable for the Share's lifetime. HTML and Markdown Short links serve their Artifact bodies; a Playwright Trace Short link opens the external Trace Viewer, which fetches the trace from the Share's **Raw trace endpoint**. Slug is 8 characters, randomly generated — not user-chosen.
+The URL for a Share (e.g. `https://mekari-canvas.vercel.app/s/x7k9m2p4`). It remains stable for the Share's lifetime. HTML and Markdown Short links serve their Artifact bodies; a Playwright Trace Short link opens the external Trace Viewer, which fetches the trace from the Share's **Raw trace endpoint**. Slug is 8 characters, randomly generated — not user-chosen. Opening it requires being a **Viewer**; holding the link alone is not enough.
 _Avoid_: Link, URL, permalink
 
 **Slug**:
@@ -37,11 +37,11 @@ The 8-character random identifier in a Short link. Generated via nanoid — ungu
 _Avoid_: ID, code, hash
 
 **Title**:
-Optional human-facing label for a Share. Not unique across Shares. Identity remains the **Slug**; Title is for Publishers and agents. Visible in publisher surfaces (**My Shares**, publish/**Edit** UI, **Agent API**) — not on the public Short link. Trimmed; blank/whitespace is stored as absent; max length 120 characters; Unicode allowed. In **My Shares**, when set, Title is the row's primary label (clickable to the Short link) in place of `/s/{slug}` and the Short link is not shown again as text; when absent, the primary label falls back to `/s/{slug}`. Copy still copies the full Short link. Browser create leaves the Title field blank (no filename default). May be omitted in storage/API; the **Skill package** instructs agents to supply one on publish. On **Edit**, omitted `title` leaves the existing Title unchanged; empty/whitespace clears it; a non-empty value sets it. Clearable on **Edit**.
+Optional human-facing label for a Share. Not unique across Shares. Identity remains the **Slug**; Title is for Publishers and agents. Visible in publisher surfaces (**My Shares**, publish/**Edit** UI, **Agent API**) — not on the Short link. Trimmed; blank/whitespace is stored as absent; max length 120 characters; Unicode allowed. In **My Shares**, when set, Title is the row's primary label (clickable to the Short link) in place of `/s/{slug}` and the Short link is not shown again as text; when absent, the primary label falls back to `/s/{slug}`. Copy still copies the full Short link. Browser create leaves the Title field blank (no filename default). May be omitted in storage/API; the **Skill package** instructs agents to supply one on publish. On **Edit**, omitted `title` leaves the existing Title unchanged; empty/whitespace clears it; a non-empty value sets it. Clearable on **Edit**.
 _Avoid_: Name, link title, label
 
 **Raw trace endpoint**:
-The non-canonical, public `/s/{slug}/trace` URL for a Playwright Trace Artifact that returns the stored ZIP to Trace Viewer while the underlying Blob remains private. It is CORS-enabled for the external viewer, supports the viewer's remote-trace fetch, and is not the Share link people are expected to copy; anyone holding the Share link can still fetch or download the raw bytes.
+The non-canonical `/s/{slug}/trace` URL for a Playwright Trace Artifact that returns the stored ZIP to Trace Viewer while the underlying Blob remains private. It is CORS-enabled for the external viewer, supports the viewer's remote-trace fetch, and is not the Share link people are expected to copy; it is reachable only through a short-lived grant issued to a **Viewer** when they open the Short link (or with a **Publisher API token**), so a leaked raw URL stops working within minutes.
 _Avoid_: Download link, ZIP link, asset URL
 
 **Trace expiration**:
@@ -56,16 +56,24 @@ _Avoid_: Approximate 1 MB cutoff, ZIP lifetime
 A best-effort server-side check that a candidate ZIP has a supported Playwright trace structure without extracting or executing its contents or pinning it to a Playwright release. Unrecognized ZIPs are rejected; support may expand as Playwright trace formats evolve.
 _Avoid_: ZIP validation, malware scan, unpacking
 
-**Publisher sign-in**:
-Google OAuth restricted to `@mekari.com`. Required to publish or delete a Share. Server-verified session — replaces the former shared **Organization code**. Homepage shows signed-in email and Sign out.
-_Avoid_: Auth, login, SSO, upload gate
+**Mekari sign-in**:
+Google OAuth restricted to `@mekari.com`. Required to view, publish, Edit, or Delete a Share in the browser. Server-verified session — replaces the former shared **Organization code**. Being signed in to Gmail elsewhere is not enough; a Viewer completes Mekari sign-in once on Canvas, then the session carries over. Homepage shows signed-in email and Sign out.
+_Avoid_: Publisher sign-in (former name), auth, login, SSO, upload gate
+
+**Viewer**:
+A Mekari employee who opens a Short link — authenticated by **Mekari sign-in** in the browser, or by a **Publisher API token** when an agent fetches the Share. Same population as **Publisher**; the term names the reading role.
+_Avoid_: Reader, visitor, guest, anyone with the link
 
 **Publisher**:
-A Mekari employee who has completed **Publisher sign-in** with a `@mekari.com` Google account.
+A **Viewer** who creates Shares — a Mekari employee who has completed **Mekari sign-in** with a `@mekari.com` Google account.
 _Avoid_: User, member, employee (too broad)
 
+**Trace viewer grant**:
+A short-lived (about 10 minutes) permission minted when a **Viewer** opens a Playwright Trace Short link, carried in the Trace Viewer's fetch of the **Raw trace endpoint**. Lets the external viewer load the ZIP without a Canvas session. Reloading after it lapses goes back through the Short link for a fresh grant.
+_Avoid_: Signed URL, download token, trace token
+
 **Published by**:
-The Publisher's Google email, captured at Share create and stored in KV **Share** metadata. Immutable on **Edit**. Shown in **My Shares** only — not exposed on the public Short link.
+The Publisher's Google email, captured at Share create and stored in KV **Share** metadata. Immutable on **Edit**. Shown in **My Shares** only — not exposed on the Short link.
 _Avoid_: Author, owner, creator
 
 **Blob store**:
@@ -81,7 +89,7 @@ Removing a Share entirely — its Short link returns 404. Same authorization as 
 _Avoid_: Remove, unpublish, archive
 
 **My Shares**:
-The list of Shares published by the signed-in **Publisher**, fetched from the server (**Agent API** list). Each row's primary label is the Share's **Title** when set, otherwise `/s/{slug}`; that label links to the Short link. The Short link is not shown again as separate text when Title is present. Meta shows **Artifact kind** (`html`, `md`, or `trace`); Playwright Trace rows also show their size and show an expiration date only when one exists. Actions: copy Short link, **Edit** (pencil) arms the homepage publish panel for that Share, Delete. Only visible after **Publisher sign-in**.
+The list of Shares published by the signed-in **Publisher**, fetched from the server (**Agent API** list). Each row's primary label is the Share's **Title** when set, otherwise `/s/{slug}`; that label links to the Short link. The Short link is not shown again as separate text when Title is present. Meta shows **Artifact kind** (`html`, `md`, or `trace`); Playwright Trace rows also show their size and show an expiration date only when one exists. Actions: copy Short link, **Edit** (pencil) arms the homepage publish panel for that Share, Delete. Only visible after **Mekari sign-in**.
 _Avoid_: History, dashboard, library
 
 **Browser edit token**:
@@ -145,7 +153,7 @@ A local coding-agent client that can receive the Add skill setup prompt and use 
 _Avoid_: Harness, AI app, integration
 
 **Mekari Canvas skill**:
-The installed **Skill package** entry point for **Agent publish** — invoked as **`/mekari-canvas`**. Supports explicit subcommands (`publish`, `list`, `delete`, `edit`, `setup`) or freeform intent when context is clear (e.g. attached handoff file or Playwright trace ZIP). Instructs agents to supply a **Title** on publish (`title` / `--title`) — a short descriptive phrase (about 3–8 words) from the Artifact's purpose, under 120 characters. Agent `list` columns: `slug, title, kind, updatedAt, …` (empty Title when absent). Installed globally through the **Skills CLI** so it works from any repo.
+The installed **Skill package** entry point for **Agent publish** and agent reading of Shares — invoked as **`/mekari-canvas`**. Supports explicit subcommands (`publish`, `read`, `list`, `delete`, `edit`, `setup`) — `read` fetches any Canvas Short link as a **Viewer** using the stored **Publisher API token**; freeform intent also works when context is clear (e.g. attached handoff file or Playwright trace ZIP). Instructs agents to supply a **Title** on publish (`title` / `--title`) — a short descriptive phrase (about 3–8 words) from the Artifact's purpose, under 120 characters. Agent `list` columns: `slug, title, kind, updatedAt, …` (empty Title when absent). Installed globally through the **Skills CLI** so it works from any repo.
 _Avoid_: Canvas skill, publish skill, MCP tool
 
 **Skills CLI**:
@@ -157,13 +165,17 @@ _Avoid_: skills.sh registry, harness installer, Canvas installer
 - One **Share** has exactly one **Artifact** — HTML, Markdown, or Playwright trace
 - One **Share** has at most one **Title**
 - One **Short link** maps to exactly one **Share**
-- **Viewing** a Share requires only the Short link (unguessable slug) — no login
-- **Publishing** a Share requires **Publisher sign-in** before any paste or upload on the homepage; create sets **Published by** from the session email
+- **Viewing** any Share — every Artifact kind, including Shares created before the guard — requires being a **Viewer**: **Mekari sign-in** in the browser, or a **Publisher API token** for agents
+- A browser without **Mekari sign-in** opening a Short link is sent to sign-in and returned to that same Short link afterwards; sign-in is checked before Share existence, so outsiders cannot tell live, expired, and missing slugs apart
+- Any valid **Publisher API token** can read any Share — not only Shares its Publisher published
+- HTML Artifacts are served sandboxed: they render for the **Viewer** but cannot act as the Viewer against Canvas
+- Link previews (Slack, Confluence, etc.) cannot see Share content
+- **Publishing** a Share requires **Mekari sign-in** before any paste or upload on the homepage; create sets **Published by** from the session email
 - Both homepage publishing and **Agent publish** can create or Edit HTML, Markdown, and Playwright Trace Artifacts and set **Title**
 - Playwright Trace Artifact uploads use a binary file contract; an upload is not a base64- or JSON-encoded text Artifact
 - **Edit** keeps the same Short link; absent Edit target, publish creates a new Share
 - **Edit** may change **Title** alone, Artifact alone, or both; Title-only Edit does not touch the Artifact
-- **Edit** requires **Publisher sign-in** or **Publisher API token**; session or token identity must match **Published by**; **Published by** unchanged on Edit
+- **Edit** requires **Mekari sign-in** or **Publisher API token**; session or token identity must match **Published by**; **Published by** unchanged on Edit
 - An active Playwright Trace **Share** keeps its original **Trace expiration** on same-class Artifact overwrite; large → small clears it, while small → large sets a new seven-day deadline; after expiration and sweeping, its Short link and raw endpoint return 404 and a new Share is required
 - A candidate ZIP must pass **Trace structure validation** before it becomes a Playwright Trace Artifact
 - **Trace expiration** is visible in **My Shares** only when present and is included as an ISO date or explicit `null` in trace publish/list responses
@@ -171,11 +183,11 @@ _Avoid_: skills.sh registry, harness installer, Canvas installer
 - **Delete** requires the same authorization as **Edit**
 - HTML and Markdown **Shares** are served raw at their Short links — HTML Artifacts as `text/html`, Markdown Artifacts as `text/markdown`; no iframe wrapper
 - A Playwright Trace **Share** redirects from its Short link to Playwright Trace Viewer; Trace Viewer fetches the ZIP from the Share's **Raw trace endpoint**
-- The **Raw trace endpoint** is public and CORS-enabled for Playwright Trace Viewer, while its underlying Blob storage is private
-- The trace redirect is a convenience boundary, not download prevention; link-holders can fetch the **Raw trace endpoint**
+- The **Raw trace endpoint** is CORS-enabled for Playwright Trace Viewer and accepts only a short-lived Viewer grant or a **Publisher API token**, while its underlying Blob storage is private
+- The trace redirect is a convenience boundary, not download prevention; a **Viewer** can still download the raw trace
 - **Agent publish** Edit and Delete require **Publisher API token** + matching **Published by**
-- **Setup code** exchanges once for the global setup's **Publisher API token** through the selected launch **Agent surface**; revocable from the homepage independently of **Publisher sign-in**
-- **Add skill** requires **Publisher sign-in**; the resulting token enables **Agent publish** from all supported **Agent surfaces** after the global setup completes
+- **Setup code** exchanges once for the global setup's **Publisher API token** through the selected launch **Agent surface**; revocable from the homepage independently of **Mekari sign-in**
+- **Add skill** requires **Mekari sign-in**; the resulting token enables **Agent publish** from all supported **Agent surfaces** after the global setup completes
 - **Setup manifest** is public; **Setup code** is single-use and minted per click — token only via exchange, never embedded in the manifest
 - **Skill refresh** replaces the managed skill files but leaves the existing **Publisher API token** and unrelated local files untouched
 - A **Skill refresh** checks the shared token before exchanging the new **Setup code**; valid credentials are reused, while missing or rejected credentials are replaced
@@ -202,8 +214,8 @@ _Avoid_: skills.sh registry, harness installer, Canvas installer
 
 ## Flagged ambiguities
 
-- "org-only" means link discipline + unguessable slugs, not network isolation — resolved for v1.
-- Edit authorization: **Publisher sign-in** or **Publisher API token**; identity must match **Published by** — resolved with **Agent publish**.
-- **Organization code** (shared secret via `x-upload-gate`) superseded by **Publisher sign-in** — remove after Google OAuth ships.
+- "org-only" formerly meant link discipline + unguessable slugs; superseded — viewing now requires being a **Viewer** (Mekari sign-in or Publisher API token).
+- Edit authorization: **Mekari sign-in** or **Publisher API token**; identity must match **Published by** — resolved with **Agent publish**.
+- **Organization code** (shared secret via `x-upload-gate`) superseded by **Mekari sign-in** — remove after Google OAuth ships.
 - Legacy Shares (no **Published by** in KV): **Edit** and **Delete** still require valid **Browser edit token** — grandfather only; new publishes always set **Published by**.
 - **Browser edit token** deprecated for new Shares — may still be returned on browser create short term but server ignores when **Published by** matches.

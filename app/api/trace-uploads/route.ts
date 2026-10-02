@@ -1,6 +1,6 @@
 import { nanoid } from "nanoid";
 import { getApiBase } from "@/lib/api-base";
-import { getPublisherIdentity } from "@/lib/publisher-session";
+import { getPublisherIdentity, MEKARI_SIGN_IN_OR_TOKEN_REQUIRED } from "@/lib/publisher-session";
 import { checkSkillPackage } from "@/lib/skill-package-freshness";
 import { StorageMisconfiguredError } from "@/lib/storage-errors";
 import { getStorage } from "@/lib/storage";
@@ -10,7 +10,7 @@ export async function POST(req: Request) {
   const identity = await getPublisherIdentity(req);
   if (!identity) {
     return Response.json(
-      { error: "Publisher sign-in or Bearer token required" },
+      { error: MEKARI_SIGN_IN_OR_TOKEN_REQUIRED },
       { status: 401 }
     );
   }

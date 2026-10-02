@@ -1,4 +1,4 @@
-import { getPublisherEmail } from "@/lib/publisher-session";
+import { getPublisherEmail, MEKARI_SIGN_IN_OR_TOKEN_REQUIRED } from "@/lib/publisher-session";
 import { authorizeShareMutation } from "@/lib/share-authz";
 import { getStorage } from "@/lib/storage";
 
@@ -9,7 +9,7 @@ export async function DELETE(
   const publisherEmail = await getPublisherEmail(req);
   if (!publisherEmail) {
     return Response.json(
-      { error: "Publisher sign-in or Bearer token required" },
+      { error: MEKARI_SIGN_IN_OR_TOKEN_REQUIRED },
       { status: 401 }
     );
   }
